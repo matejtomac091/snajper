@@ -2,6 +2,10 @@
 
 3D multiplayer snajper igra u pregledniku. Svi otvore isti link i igraju, bez instalacije.
 
+**Igra:** https://snajper.onrender.com
+
+Render sam objavi novu verziju čim se promijeni kod na grani `main`.
+
 ## Stavljanje na Render (jednom, ~10 minuta)
 
 Render ne prima zip direktno, nego čita kod s GitHuba.
