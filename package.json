@@ -1,0 +1,19 @@
+{
+  "name": "snajper-razred",
+  "version": "1.0.0",
+  "private": true,
+  "description": "3D multiplayer snajper igra za razred (preglednik + Node.js server)",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/run.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "three": "^0.186.1",
+    "ws": "^8.22.0"
+  }
+}

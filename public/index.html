@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="hr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Snajper</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">{ "imports": { "three": "/three/three.module.js" } }</script>
+</head>
+<body>
+  <div id="lobby" class="overlay">
+    <div class="panel">
+      <h1>SNAJPER</h1>
+      <p class="sub">Multiplayer za razred</p>
+      <label>Ime<input id="name" maxlength="16" autocomplete="off" spellcheck="false" placeholder="npr. Matej"></label>
+      <label>Soba<input id="room" maxlength="12" autocomplete="off" spellcheck="false" placeholder="razred"></label>
+      <label>Botovi za vježbu
+        <select id="bots">
+          <option value="0">Bez botova</option>
+          <option value="2">2 bota</option>
+          <option value="4">4 bota</option>
+          <option value="6">6 botova</option>
+          <option value="8">8 botova</option>
+        </select>
+      </label>
+      <p class="hint">Botove bira onaj tko prvi otvori sobu. Odlaze sami kako ulaze pravi igrači.</p>
+      <button id="play" type="button">IGRAJ</button>
+      <p id="lobbyError" class="error" role="alert"></p>
+      <p id="mobileWarn" class="error" hidden>Za ovu igru trebaju miš i tipkovnica. Na mobitelu neće raditi.</p>
+      <details><summary>Postavke</summary><div id="settingsHome"></div></details>
+      <details>
+        <summary>Kontrole</summary>
+        <ul class="controls">
+          <li><b>WASD</b> kretanje</li>
+          <li><b>Miš</b> ciljanje</li>
+          <li><b>Lijevi klik</b> pucaj</li>
+          <li><b>Desni klik</b> (drži) nišan</li>
+          <li><b>Kotačić</b> zum 4x / 8x</li>
+          <li><b>Space</b> skok</li>
+          <li><b>Shift</b> ili <b>C</b> čučanj</li>
+          <li><b>R</b> punjenje</li>
+          <li><b>Tab</b> rezultati</li>
+          <li><b>Esc</b> pauza</li>
+        </ul>
+      </details>
+    </div>
+  </div>
+
+  <div id="settings" class="settings">
+    <label>Osjetljivost miša <span id="sensVal"></span><input id="sens" type="range" min="0.2" max="3" step="0.05"></label>
+    <label>Kvaliteta slike
+      <select id="quality">
+        <option value="0.5">Niska (najbrže)</option>
+        <option value="0.75">Srednja</option>
+        <option value="1">Visoka</option>
+      </select>
+    </label>
+    <label>Glasnoća<input id="volume" type="range" min="0" max="1" step="0.05"></label>
+  </div>
+
+  <div id="hud" hidden>
+    <div id="scope"><div class="line h"></div><div class="line v"></div><div class="dot"></div></div>
+    <div id="crosshair"></div>
+    <div id="spread"></div>
+    <div id="hitmarker"></div>
+    <div id="dmgdir"></div>
+    <div id="vignette"></div>
+    <div id="topbar">
+      <span id="kd">0 / 0</span>
+      <span id="timer">5:00</span>
+      <span id="net"></span>
+    </div>
+    <div id="killfeed"></div>
+    <div id="center"></div>
+    <div id="protect" hidden>ZAŠTIĆEN</div>
+    <div id="bottom">
+      <div id="hpbox"><div id="hpbar"><div id="hpfill"></div></div><span id="hp">100</span></div>
+      <div id="ammo">5 / 5</div>
+    </div>
+    <div id="death" hidden>
+      <div class="big">ELIMINIRAN</div>
+      <div id="deathBy"></div>
+      <div id="deathTimer"></div>
+    </div>
+    <div id="board" class="card" hidden></div>
+    <div id="end" class="card" hidden></div>
+  </div>
+
+  <div id="pause" class="overlay" hidden>
+    <div class="panel">
+      <h2>Pauza</h2>
+      <button id="resume" type="button">KLIKNI ZA IGRU</button>
+      <p id="pauseHint" class="hint"></p>
+      <p id="roomInfo" class="hint"></p>
+      <button id="copyLink" class="ghost" type="button">Kopiraj link sobe</button>
+      <div id="settingsPause"></div>
+      <ul class="controls compact">
+        <li><b>WASD</b> kretanje</li>
+        <li><b>Desni klik</b> nišan</li>
+        <li><b>Kotačić</b> zum</li>
+        <li><b>Shift/C</b> čučanj</li>
+        <li><b>R</b> punjenje</li>
+        <li><b>Tab</b> rezultati</li>
+      </ul>
+      <button id="leave" class="ghost" type="button">Izađi u izbornik</button>
+    </div>
+  </div>
+
+  <div id="lost" class="overlay" hidden>
+    <div class="panel">
+      <h2>Veza je prekinuta</h2>
+      <p id="lostMsg" class="hint"></p>
+      <button id="reconnect" type="button">Ponovno</button>
+    </div>
+  </div>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>
