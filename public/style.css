@@ -239,3 +239,13 @@ label.check input { display: inline-block; width: 16px; height: 16px; margin: 0;
 .admin-player { display: flex; justify-content: space-between; align-items: center; font-size: 13px; padding: 4px 0; border-top: 1px solid var(--line); }
 .admin-player button { width: auto; margin: 0; padding: 4px 10px; font-size: 12px; letter-spacing: 0; color: var(--text); background: rgba(255, 90, 79, 0.25); }
 #adminMsg:empty { display: none; }
+
+/* ---------- skinovi i banana ---------- */
+.skin-row { display: flex; gap: 12px; align-items: flex-end; }
+.skin-row label { flex: 1; }
+#skinPreview { flex: 0 0 120px; height: 150px; margin-bottom: 12px; border-radius: 10px; background: radial-gradient(circle at 50% 65%, rgba(255, 203, 71, 0.18), transparent 70%); }
+#skinPreview canvas { display: block; }
+.right-hud { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+#bananaHud { font-size: 24px; font-weight: 900; color: var(--accent); }
+#bananaHud small { font-size: 13px; color: var(--text); opacity: 0.8; }
+.feed-row .boom { color: var(--accent); }

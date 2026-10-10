@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
 import {
   TICK_RATE, INTERP_DELAY, MAX_HP, RESPAWN_TIME, SPAWN_PROTECT, MATCH_TIME, END_TIME,
-  MAX_PLAYERS, MAX_BOTS, P, W, spreadFor, eyeHeight, aimDir,
+  MAX_PLAYERS, MAX_BOTS, P, W, SKINS, BANANA, spreadFor, eyeHeight, aimDir,
 } from './public/shared/config.js';
 import { buildMap } from './public/shared/map.js';
 import { createBody, stepBody, blocked } from './public/shared/physics.js';
@@ -22,7 +22,7 @@ const MATCH_SECONDS = Number(process.env.MATCH_TIME) || MATCH_TIME;
 const END_SECONDS = Number(process.env.END_TIME) || END_TIME;
 // Lozinka za admin panel. Postavlja se na Renderu (Environment → ADMIN_KEY), nikad u kodu jer je repozitorij javan.
 const ADMIN_KEY = String(process.env.ADMIN_KEY || '');
-const CHEATS = ['god', 'ammo', 'rapid', 'aim', 'speed', 'fly', 'wall'];
+const CHEATS = ['god', 'ammo', 'rapid', 'aim', 'speed', 'fly', 'wall', 'banana'];
 const RAPID_COOLDOWN = 150; // ms
 
 const MAP = buildMap();
@@ -122,6 +122,8 @@ class Room {
     this.state = 'play';
     this.timeLeft = MATCH_SECONDS;
     this.endAt = 0;
+    this.projectiles = [];
+    this.nextProjectile = 1;
   }
 
   humans() {
@@ -167,7 +169,7 @@ function uniqueName(room, name) {
   }
 }
 
-function makePlayer(room, name, ws, bot) {
+function makePlayer(room, name, ws, bot, skin = 'klasik') {
   const id = room.nextId++;
   const t = now();
   const p = {
@@ -181,6 +183,7 @@ function makePlayer(room, name, ws, bot) {
     ammo: W.mag, reloadUntil: 0, lastShot: -1e9,
     spawnSeq: 0, lastMove: t, budget: 0, hist: [], rtt: 80, strikes: 0,
     admin: false, adminTries: 0, cheats: {},
+    skin: SKINS.includes(skin) ? skin : 'klasik', streak: 0, bananas: 0,
     body: null,
     ai: bot ? {
       target: null, readyAt: 0, nextScan: 0, nextShotGap: 0, goal: null, goalUntil: 0,
@@ -193,7 +196,7 @@ function makePlayer(room, name, ws, bot) {
 
 function roster(room) {
   return [...room.players.values()].map((p) => ({
-    id: p.id, name: p.name, hue: p.hue, kills: p.kills, deaths: p.deaths, bot: p.bot,
+    id: p.id, name: p.name, hue: p.hue, kills: p.kills, deaths: p.deaths, bot: p.bot, skin: p.skin,
   }));
 }
 
@@ -412,14 +415,100 @@ function damage(room, from, to, part, t) {
   const kill = to.hp <= 0;
   send(from, { t: 'hit', part, kill });
   send(to, { t: 'dmg', hp: Math.max(0, to.hp), from: from.id, fx: r2(from.x), fz: r2(from.z) });
-  if (!kill) return;
+  if (kill) killPlayer(room, from, to, part === 'head' ? 'head' : 'shot', t);
+}
+
+// how: 'shot', 'head' ili 'banana'
+function killPlayer(room, from, to, how, t) {
   to.alive = false;
   to.hp = 0;
   to.scoped = false;
   to.deaths++;
-  from.kills++;
+  to.streak = 0;
   to.respawnAt = t + RESPAWN_TIME * 1000;
-  room.broadcast({ t: 'kill', k: from.id, v: to.id, hs: part === 'head', kk: from.kills, vd: to.deaths });
+  from.kills++;
+  from.streak++;
+  room.broadcast({ t: 'kill', k: from.id, v: to.id, hs: how === 'head', w: how, kk: from.kills, vd: to.deaths });
+  if (!from.bot && from.streak % BANANA.streak === 0 && from.bananas < BANANA.max) {
+    from.bananas++;
+    send(from, { t: 'banana', n: from.bananas });
+    room.broadcast({ t: 'streak', id: from.id, n: from.streak });
+  }
+}
+
+/* ------------------------------------------------------------------ banana bomba */
+
+function inAnyBox(x, y, z) {
+  for (const b of BOXES) {
+    if (x > b.minX && x < b.maxX && y > b.minY && y < b.maxY && z > b.minZ && z < b.maxZ) return true;
+  }
+  return false;
+}
+
+function onThrow(room, p, m) {
+  if (room.state !== 'play' || !p.alive) return;
+  if (!p.cheats.banana && p.bananas <= 0) return;
+  if (!Array.isArray(m.d) || m.d.length !== 3) return;
+  const d = m.d.map(Number);
+  if (!d.every(Number.isFinite)) return;
+  const len = Math.hypot(d[0], d[1], d[2]);
+  if (len < 0.5) return;
+  if (!p.cheats.banana) {
+    p.bananas--;
+    send(p, { t: 'banana', n: p.bananas });
+  }
+  p.protectUntil = 0;
+  const [dx, dy, dz] = d.map((v) => v / len);
+  room.projectiles.push({
+    id: room.nextProjectile++, owner: p,
+    x: p.x + dx * 0.6, y: p.y + eyeHeight(p.crouch) - 0.1, z: p.z + dz * 0.6,
+    vx: dx * BANANA.speed, vy: dy * BANANA.speed + BANANA.up, vz: dz * BANANA.speed,
+    life: BANANA.fuse,
+  });
+}
+
+function explode(room, pr, x, y, z, t) {
+  room.broadcast({ t: 'boom', x: r2(x), y: r2(y), z: r2(z), by: pr.owner.id });
+  if (room.state !== 'play') return;
+  for (const o of room.players.values()) {
+    if (o === pr.owner || !o.alive || t < o.protectUntil || o.cheats.god) continue;
+    const tx = o.x - x, ty = o.y + 1.1 - y, tz = o.z - z;
+    const dist = Math.hypot(tx, ty, tz);
+    if (dist > BANANA.radius) continue;
+    // Zid štiti od eksplozije.
+    if (dist > 0.3 && rayWorld(BOXES, x, y, z, tx / dist, ty / dist, tz / dist, dist) < dist - 0.4) continue;
+    send(o, { t: 'dmg', hp: 0, from: pr.owner.id, fx: r2(x), fz: r2(z) });
+    killPlayer(room, pr.owner, o, 'banana', t);
+  }
+}
+
+function tickProjectiles(room, t, dt) {
+  const steps = 4;
+  const s = dt / steps;
+  room.projectiles = room.projectiles.filter((pr) => {
+    pr.life -= dt;
+    for (let i = 0; i < steps; i++) {
+      pr.vy -= BANANA.gravity * s;
+      const nx = pr.x + pr.vx * s, ny = pr.y + pr.vy * s, nz = pr.z + pr.vz * s;
+      let hit = ny <= 0.05 || inAnyBox(nx, ny, nz) || Math.abs(nx) > MAP.arena || Math.abs(nz) > MAP.arena;
+      if (!hit) {
+        for (const o of room.players.values()) {
+          if (o === pr.owner || !o.alive) continue;
+          if (Math.hypot(o.x - nx, o.y + 1.0 - ny, o.z - nz) < 0.6) { hit = true; break; }
+        }
+      }
+      if (hit) {
+        explode(room, pr, pr.x, Math.max(0.15, pr.y), pr.z, t);
+        return false;
+      }
+      pr.x = nx; pr.y = ny; pr.z = nz;
+    }
+    if (pr.life <= 0) {
+      explode(room, pr, pr.x, Math.max(0.15, pr.y), pr.z, t);
+      return false;
+    }
+    return true;
+  });
 }
 
 /* ------------------------------------------------------------------ botovi */
@@ -444,8 +533,8 @@ function syncBots(room) {
   const bots = [...room.players.values()].filter((p) => p.bot);
   if (bots.length < want) {
     const name = BOT_NAMES[room.botSerial++ % BOT_NAMES.length];
-    const b = makePlayer(room, name, null, true);
-    room.broadcast({ t: 'join', id: b.id, name: b.name, hue: b.hue, bot: true });
+    const b = makePlayer(room, name, null, true, SKINS[Math.floor(Math.random() * SKINS.length)]);
+    room.broadcast({ t: 'join', id: b.id, name: b.name, hue: b.hue, bot: true, skin: b.skin });
   } else if (bots.length > want) {
     const b = bots[bots.length - 1];
     room.players.delete(b.id);
@@ -565,9 +654,12 @@ function endMatch(room, t) {
 function resetMatch(room, t) {
   room.state = 'play';
   room.timeLeft = MATCH_SECONDS;
+  room.projectiles = [];
   for (const p of room.players.values()) {
     p.kills = 0;
     p.deaths = 0;
+    p.streak = 0;
+    p.bananas = 0;
     p.alive = false;
     p.respawnAt = t;
   }
@@ -583,6 +675,7 @@ function tickRoom(room, t) {
     resetMatch(room, t);
   }
   syncBots(room);
+  tickProjectiles(room, t, dt);
   for (const p of room.players.values()) {
     if (!p.alive) {
       if (room.state === 'play' && t >= p.respawnAt) spawn(room, p);
@@ -600,7 +693,9 @@ function tickRoom(room, t) {
     const f = (p.crouch ? 1 : 0) | (p.scoped ? 2 : 0) | (t < p.protectUntil ? 4 : 0);
     list.push([p.id, r2(p.x), r2(p.y), r2(p.z), r3(p.yaw), r3(p.pitch), f]);
   }
-  const s = JSON.stringify({ t: 's', p: list, tl: Math.max(0, Math.ceil(room.timeLeft)) });
+  const msg = { t: 's', p: list, tl: Math.max(0, Math.ceil(room.timeLeft)) };
+  if (room.projectiles.length) msg.b = room.projectiles.map((pr) => [pr.id, r2(pr.x), r2(pr.y), r2(pr.z)]);
+  const s = JSON.stringify(msg);
   for (const p of room.players.values()) {
     if (p.ws && p.ws.bufferedAmount < 262144) sendRaw(p, s); // sporim vezama preskačemo stanje umjesto da gomilamo
   }
@@ -735,12 +830,12 @@ wss.on('connection', (ws) => {
         console.log(`soba "${code}" otvorena`);
       }
       room = r;
-      player = makePlayer(room, cleanName(m.name), ws, false);
+      player = makePlayer(room, cleanName(m.name), ws, false, String(m.skin ?? ''));
       send(player, {
         t: 'welcome', id: player.id, room: code, state: room.state,
         tl: Math.ceil(room.timeLeft), players: roster(room),
       });
-      room.broadcast({ t: 'join', id: player.id, name: player.name, hue: player.hue, bot: false }, player);
+      room.broadcast({ t: 'join', id: player.id, name: player.name, hue: player.hue, bot: false, skin: player.skin }, player);
       if (room.state === 'play') spawn(room, player);
       return;
     }
@@ -749,6 +844,7 @@ wss.on('connection', (ws) => {
       case 'u': onUpdate(player, m); break;
       case 'shoot': onShoot(room, player, m); break;
       case 'reload': onReload(player); break;
+      case 'throw': onThrow(room, player, m); break;
       case 'ping':
         player.rtt = clamp(+m.rtt || 0, 0, 1000);
         send(player, { t: 'pong', ct: +m.ct || 0 });

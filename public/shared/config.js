@@ -65,3 +65,17 @@ export function aimDir(yaw, pitch) {
   const c = Math.cos(pitch);
   return [-Math.sin(yaw) * c, Math.sin(pitch), -Math.cos(yaw) * c];
 }
+
+// Skinovi su samo izgled: svi imaju istu pogodnu zonu, pa nijedan nije lakše pogoditi.
+export const SKINS = ['klasik', 'vozac', 'robot', 'kaktus', 'banana', 'ninja'];
+
+// Banana bomba: dobiješ jednu za svaka 3 ubojstva zaredom (bez umiranja).
+export const BANANA = {
+  streak: 3,
+  max: 3,        // najviše banana odjednom
+  speed: 18,     // m/s
+  up: 3,         // dodatni uzlet pri bacanju
+  gravity: 20,
+  radius: 6,     // m, sve unutra (s vidljivim putem do eksplozije) umire
+  fuse: 2.5,     // s, eksplodira najkasnije nakon ovoliko
+};

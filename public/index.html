@@ -24,6 +24,19 @@
         </select>
       </label>
       <p class="hint">Botove bira onaj tko prvi otvori sobu. Odlaze sami kako ulaze pravi igrači.</p>
+      <div class="skin-row">
+        <label>Skin
+          <select id="skin">
+            <option value="klasik">Klasik</option>
+            <option value="vozac">Vozač</option>
+            <option value="robot">Robot</option>
+            <option value="kaktus">Kaktus</option>
+            <option value="banana">Banana</option>
+            <option value="ninja">Ninja</option>
+          </select>
+        </label>
+        <div id="skinPreview"></div>
+      </div>
       <button id="play" type="button">IGRAJ</button>
       <p id="lobbyError" class="error" role="alert"></p>
       <p id="mobileWarn" class="error" hidden>Za ovu igru trebaju miš i tipkovnica. Na mobitelu neće raditi.</p>
@@ -39,6 +52,7 @@
           <li><b>Space</b> skok</li>
           <li><b>Shift</b> ili <b>C</b> čučanj</li>
           <li><b>R</b> punjenje</li>
+          <li><b>G</b> banana (niz od 3)</li>
           <li><b>Tab</b> rezultati</li>
           <li><b>Esc</b> pauza</li>
         </ul>
@@ -78,7 +92,10 @@
     <div id="protect" hidden>ZAŠTIĆEN</div>
     <div id="bottom">
       <div id="hpbox"><div id="hpbar"><div id="hpfill"></div></div><span id="hp">100</span></div>
-      <div id="ammo">5 / 5</div>
+      <div class="right-hud">
+        <div id="bananaHud" hidden>🍌 <span id="bananaCount">1</span> <small>[G]</small></div>
+        <div id="ammo">5 / 5</div>
+      </div>
     </div>
     <div id="death" hidden>
       <div class="big">ELIMINIRAN</div>
@@ -103,6 +120,7 @@
         <li><b>Kotačić</b> zum</li>
         <li><b>Shift/C</b> čučanj</li>
         <li><b>R</b> punjenje</li>
+        <li><b>G</b> banana</li>
         <li><b>Tab</b> rezultati</li>
       </ul>
       <button id="leave" class="ghost" type="button">Izađi u izbornik</button>
@@ -123,6 +141,7 @@
             <label class="check"><input type="checkbox" data-cheat="speed"> Brzina i skok</label>
             <label class="check"><input type="checkbox" data-cheat="fly"> Letenje kroz zidove</label>
             <label class="check"><input type="checkbox" data-cheat="wall"> Vidi kroz zidove</label>
+            <label class="check"><input type="checkbox" data-cheat="banana"> Beskonačne banane</label>
           </div>
           <p class="hint">Letenje: Space gore, Shift dolje.</p>
           <div class="admin-title">Soba</div>

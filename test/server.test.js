@@ -283,6 +283,39 @@ async function adminTests(port) {
   assert.equal(legs.kill, true);
   console.log('  pogodak u noge ubija iz jednog metka ✔');
 
+  // banana (preko admin cheata): pada 4 m od igrača i ubija ga
+  await A.wait('spawn', (m) => m.q === 2, 5000);
+  await sleep(1700);
+  M.send({ t: 'admin', a: 'cheat', name: 'banana', on: true });
+  await M.wait('admin', (m) => m.ok && m.cheats.banana);
+  const up = [0, 0.25, -1];
+  const l = Math.hypot(...up);
+  M.send({ t: 'throw', d: up.map((v) => v / l) });
+  const boom = await A.wait('boom', () => true, 4000);
+  assert.ok(Math.abs(boom.z - A.me.z) < 6, `banana pala na z=${boom.z}`);
+  const bk = await A.wait('kill', (m) => m.w === 'banana', 2000);
+  assert.equal(bk.v, A.welcome.id);
+  console.log(`  banana eksplodira (${Math.abs(boom.z - A.me.z).toFixed(1)} m od mete) i ubija ✔`);
+  M.send({ t: 'admin', a: 'cheat', name: 'banana', on: false });
+  await M.wait('admin', (m) => m.ok && !m.cheats.banana);
+
+  // treće ubojstvo zaredom daje bananu
+  await A.wait('spawn', (m) => m.q === 3, 5000);
+  await sleep(1700);
+  M.send({ t: 'shoot', d: dirTo([M.me.x, 1.6, M.me.z], [A.me.x, 1.1, A.me.z]) });
+  const award = await M.wait('banana', (m) => m.n === 1, 3000);
+  assert.equal(award.n, 1);
+  await A.wait('streak', (m) => m.id === M.welcome.id && m.n === 3, 2000);
+  console.log('  niz od 3 ubojstva daje bananu ✔');
+
+  for (const m of M.log) m._used = true; // stare eksplozije ne računamo
+  M.send({ t: 'throw', d: [0, 0.3, 0.95] });
+  await M.wait('banana', (m) => m.n === 0, 2000);
+  await M.wait('boom', () => true, 4000);
+  M.send({ t: 'throw', d: [0, 0.3, 0.95] });
+  await M.none('boom', () => true, 3000);
+  console.log('  banana se može baciti samo jednom ✔');
+
   M.send({ t: 'u', x: M.me.x, y: 30, z: M.me.z, yaw: 0, pitch: 0, c: 0, g: 0, s: 0, q: M.me.q });
   await M.none('corr', () => true, 300);
   console.log('  admin smije letjeti ✔');

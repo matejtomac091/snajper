@@ -1,6 +1,6 @@
 // Snajper — klijent u pregledniku. Crta svijet (Three.js), čita miš i tipkovnicu, šalje položaj serveru.
 import * as THREE from 'three';
-import { P, W, MAX_HP, INTERP_DELAY, RESPAWN_TIME, MATCH_TIME, spreadFor, eyeHeight, aimDir } from './shared/config.js';
+import { P, W, MAX_HP, INTERP_DELAY, RESPAWN_TIME, MATCH_TIME, SKINS, BANANA, spreadFor, eyeHeight, aimDir } from './shared/config.js';
 import { buildMap, COLORS } from './shared/map.js';
 import { createBody, stepBody } from './shared/physics.js';
 
@@ -15,7 +15,7 @@ const angDiff = (a, b) => wrap(b - a);
 
 /* ================================================================ postavke */
 
-const DEFAULTS = { name: '', room: 'razred', bots: 0, sens: 1, quality: 0.5, volume: 0.7 };
+const DEFAULTS = { name: '', room: 'razred', bots: 0, sens: 1, quality: 0.5, volume: 0.7, skin: 'klasik' };
 const settings = (() => {
   try {
     return { ...DEFAULTS, ...JSON.parse(localStorage.getItem('snajper') || '{}') };
@@ -127,15 +127,6 @@ buildWorld();
 
 /* ================================================================ likovi drugih igrača */
 
-const GEO = {
-  legs: new THREE.BoxGeometry(0.46, 0.8, 0.3),
-  torso: new THREE.BoxGeometry(0.56, 0.6, 0.34),
-  head: new THREE.SphereGeometry(0.21, 10, 8),
-  rifle: new THREE.BoxGeometry(0.07, 0.09, 1.1),
-};
-const SKIN = new THREE.MeshLambertMaterial({ color: '#e8b88f' });
-const RIFLE = new THREE.MeshLambertMaterial({ color: '#2a2d32' });
-
 function radialTexture(inner, outer) {
   const c = document.createElement('canvas');
   c.width = c.height = 64;
@@ -175,33 +166,137 @@ function nameTag(name) {
   return s;
 }
 
-function makeAvatar(hue, name) {
-  const color = new THREE.Color().setHSL(hue / 360, 0.6, 0.5);
-  const mat = new THREE.MeshLambertMaterial({ color });
-  const dark = new THREE.MeshLambertMaterial({ color: color.clone().multiplyScalar(0.55) });
+// Skinovi: svaki gradi noge, trup i glavu oko istih točaka kao pogodna zona (glava na 1.56 m),
+// tako da izgled ne mijenja koliko je lako nekoga pogoditi.
+const SKIN_BUILDERS = {
+  klasik(legs, torso, head, k) {
+    k.add(legs, k.B(0.46, 0.8, 0.3), k.mat(k.tint.clone().multiplyScalar(0.55)));
+    k.add(torso, k.B(0.56, 0.6, 0.34), k.mat(k.tint));
+    k.add(head, k.S(0.21), k.mat('#e8b88f'));
+  },
+  vozac(legs, torso, head, k) {
+    const suit = k.mat('#4b3bbf');
+    const white = k.mat('#f2f2f2');
+    const accent = k.mat(k.tint);
+    k.add(legs, k.B(0.46, 0.8, 0.3), suit);
+    k.add(legs, k.B(0.05, 0.8, 0.31), white, -0.2);
+    k.add(legs, k.B(0.05, 0.8, 0.31), white, 0.2);
+    k.add(torso, k.B(0.56, 0.6, 0.34), suit);
+    k.add(torso, k.B(0.12, 0.6, 0.35), accent);
+    k.add(torso, k.B(0.58, 0.07, 0.36), white, 0, -0.26);
+    k.add(head, k.S(0.23, 14, 10), white);
+    k.add(head, k.C(0.235, 0.235, 0.06, 16), accent, 0, 0.08);
+    k.add(head, k.B(0.3, 0.1, 0.1), k.mat('#111111'), 0, 0, -0.18);
+  },
+  robot(legs, torso, head, k) {
+    const steel = k.mat('#9aa3ad');
+    const dark = k.mat('#5c646e');
+    const glow = k.mat('#3ff0ff', true);
+    k.add(legs, k.B(0.18, 0.8, 0.24), dark, -0.12);
+    k.add(legs, k.B(0.18, 0.8, 0.24), dark, 0.12);
+    k.add(torso, k.B(0.58, 0.6, 0.36), steel);
+    k.add(torso, k.B(0.18, 0.1, 0.02), glow, 0, 0.08, -0.19);
+    k.add(torso, k.B(0.1, 0.44, 0.12), k.mat(k.tint), -0.34);
+    k.add(torso, k.B(0.1, 0.44, 0.12), k.mat(k.tint), 0.34);
+    k.add(head, k.B(0.36, 0.3, 0.34), steel);
+    k.add(head, k.B(0.08, 0.05, 0.02), glow, -0.08, 0.03, -0.175);
+    k.add(head, k.B(0.08, 0.05, 0.02), glow, 0.08, 0.03, -0.175);
+    k.add(head, k.C(0.012, 0.012, 0.18, 6), dark, 0, 0.24);
+    k.add(head, k.S(0.035, 6, 4), k.mat('#ff3b30', true), 0, 0.34);
+  },
+  kaktus(legs, torso, head, k) {
+    const green = k.mat('#3f8f3a');
+    const spike = k.mat('#f3eac0');
+    k.add(legs, k.B(0.4, 0.8, 0.3), k.mat('#2f6e2b'));
+    k.add(torso, k.B(0.5, 0.6, 0.38), green);
+    k.add(torso, k.B(0.16, 0.13, 0.13), green, -0.32, -0.02);
+    k.add(torso, k.B(0.12, 0.32, 0.12), green, -0.38, 0.14);
+    k.add(torso, k.B(0.16, 0.13, 0.13), green, 0.32, -0.1);
+    k.add(torso, k.B(0.12, 0.24, 0.12), green, 0.38, 0.02);
+    for (const [x, y] of [[-0.15, 0.15], [0.12, -0.1], [0.05, 0.2], [-0.1, -0.18]]) {
+      k.add(torso, k.B(0.03, 0.03, 0.08), spike, x, y, -0.22);
+      k.add(torso, k.B(0.03, 0.03, 0.08), spike, -x, y, 0.22);
+    }
+    k.add(head, k.S(0.21), green);
+    k.add(head, k.B(0.34, 0.07, 0.04), k.mat('#111111'), 0, 0.03, -0.19);
+    k.add(head, k.S(0.06, 8, 6), k.mat(k.tint), 0, 0.22);
+  },
+  banana(legs, torso, head, k) {
+    const yellow = k.mat('#f2d23c');
+    const brown = k.mat('#6b4a1f');
+    const white = k.mat('#ffffff');
+    const black = k.mat('#111111');
+    k.add(legs, k.B(0.16, 0.8, 0.18), brown, -0.11);
+    k.add(legs, k.B(0.16, 0.8, 0.18), brown, 0.11);
+    k.add(torso, k.C(0.24, 0.28, 0.6, 12), yellow, 0, 0, 0, 0, 0, 0.08);
+    k.add(head, k.S(0.22, 12, 10), yellow);
+    k.add(head, k.C(0.04, 0.06, 0.16, 6), brown, 0.03, 0.24, 0, 0, 0, -0.3);
+    for (const x of [-0.08, 0.08]) {
+      k.add(head, k.S(0.05, 8, 6), white, x, 0.04, -0.18);
+      k.add(head, k.S(0.025, 6, 4), black, x, 0.04, -0.225);
+    }
+  },
+  ninja(legs, torso, head, k) {
+    const black = k.mat('#1c1f26');
+    const band = k.mat(k.tint);
+    k.add(legs, k.B(0.46, 0.8, 0.3), black);
+    k.add(torso, k.B(0.56, 0.6, 0.34), black);
+    k.add(torso, k.B(0.58, 0.07, 0.36), band, 0, -0.22);
+    k.add(head, k.S(0.21), black);
+    k.add(head, k.B(0.28, 0.06, 0.05), k.mat('#e8b88f'), 0, 0.02, -0.18);
+    k.add(head, k.C(0.215, 0.215, 0.06, 14), band, 0, 0.1);
+    k.add(head, k.B(0.04, 0.04, 0.25), band, 0.05, 0.08, 0.28, 0.4);
+  },
+};
+
+function makeAvatar(hue, name, skin = 'klasik', withTag = true) {
+  const mats = [];
+  const geos = [];
+  const kit = {
+    tint: new THREE.Color().setHSL(hue / 360, 0.6, 0.5),
+    mat(color, basic = false) {
+      const m = basic ? new THREE.MeshBasicMaterial({ color }) : new THREE.MeshLambertMaterial({ color });
+      mats.push(m);
+      return m;
+    },
+    add(parent, geo, material, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0) {
+      geos.push(geo);
+      const m = new THREE.Mesh(geo, material);
+      m.position.set(x, y, z);
+      m.rotation.set(rx, ry, rz);
+      parent.add(m);
+      return m;
+    },
+    B: (w, h, d) => new THREE.BoxGeometry(w, h, d),
+    S: (r, ws = 10, hs = 8) => new THREE.SphereGeometry(r, ws, hs),
+    C: (rt, rb, h, seg = 10) => new THREE.CylinderGeometry(rt, rb, h, seg),
+  };
   const root = new THREE.Group();
-  const legs = new THREE.Mesh(GEO.legs, dark);
+  const legs = new THREE.Group();
   legs.position.y = 0.4;
   const upper = new THREE.Group();
   upper.position.y = 0.8;
-  const torso = new THREE.Mesh(GEO.torso, mat);
+  const torso = new THREE.Group();
   torso.position.y = 0.3;
-  const head = new THREE.Mesh(GEO.head, SKIN);
+  const head = new THREE.Group();
   head.position.y = 0.76;
   const gunPivot = new THREE.Group();
   gunPivot.position.set(0.2, 0.5, -0.1);
-  const rifle = new THREE.Mesh(GEO.rifle, RIFLE);
-  rifle.position.z = -0.4;
-  gunPivot.add(rifle);
+  kit.add(gunPivot, kit.B(0.07, 0.09, 1.1), kit.mat('#2a2d32'), 0, 0, -0.4);
+  (SKIN_BUILDERS[skin] || SKIN_BUILDERS.klasik)(legs, torso, head, kit);
   const glint = new THREE.Sprite(GLINT);
   glint.scale.setScalar(0.9);
   glint.position.set(0.05, 0.78, -0.3);
   glint.visible = false;
   upper.add(torso, head, gunPivot, glint);
-  const tag = nameTag(name);
-  tag.position.y = 2.15;
-  root.add(legs, upper, tag);
-  return { root, legs, upper, head, gunPivot, glint, tag, mats: [mat, dark], crouch: false, prot: false };
+  root.add(legs, upper);
+  let tag = null;
+  if (withTag) {
+    tag = nameTag(name);
+    tag.position.y = 2.15;
+    root.add(tag);
+  }
+  return { root, legs, upper, head, gunPivot, glint, tag, mats, geos, crouch: false, prot: false };
 }
 
 function setCrouch(av, c) {
@@ -210,7 +305,7 @@ function setCrouch(av, c) {
   av.legs.scale.y = c ? 0.5 : 1;
   av.legs.position.y = c ? 0.2 : 0.4;
   av.upper.position.y = c ? 0.32 : 0.8;
-  av.tag.position.y = c ? 1.67 : 2.15;
+  if (av.tag) av.tag.position.y = c ? 1.67 : 2.15;
 }
 
 function setProtected(av, p) {
@@ -231,11 +326,14 @@ function setWallhack(av, on) {
   });
 }
 
-function disposeAvatar(av) {
-  scene.remove(av.root);
+function disposeAvatar(av, parent = scene) {
+  parent.remove(av.root);
   for (const m of av.mats) m.dispose();
-  av.tag.material.map.dispose();
-  av.tag.material.dispose();
+  for (const g of av.geos) g.dispose();
+  if (av.tag) {
+    av.tag.material.map.dispose();
+    av.tag.material.dispose();
+  }
 }
 
 /* ================================================================ puška u ruci */
@@ -336,6 +434,128 @@ function updateFx(dt) {
   }
 }
 
+/* ================================================================ banana: let i eksplozija */
+
+function makeBananaMesh() {
+  const g = new THREE.Group();
+  const yellow = new THREE.MeshLambertMaterial({ color: '#f2d23c' });
+  const brown = new THREE.MeshLambertMaterial({ color: '#5a3d17' });
+  const seg = new THREE.CylinderGeometry(0.06, 0.06, 0.16, 8);
+  for (let i = -1; i <= 1; i++) {
+    const m = new THREE.Mesh(seg, yellow);
+    m.position.set(i * 0.12, -Math.abs(i) * 0.05, 0);
+    m.rotation.z = Math.PI / 2 + i * 0.45;
+    g.add(m);
+  }
+  const tipGeo = new THREE.CylinderGeometry(0.02, 0.035, 0.06, 6);
+  for (const side of [-1, 1]) {
+    const tip = new THREE.Mesh(tipGeo, brown);
+    tip.position.set(side * 0.22, -0.08, 0);
+    tip.rotation.z = Math.PI / 2 + side * 0.9;
+    g.add(tip);
+  }
+  g.userData.dispose = () => { yellow.dispose(); brown.dispose(); seg.dispose(); tipGeo.dispose(); };
+  return g;
+}
+
+const flyingBananas = new Map(); // id -> { mesh, tx, ty, tz }
+function syncFlyingBananas(list) {
+  const seen = new Set();
+  for (const [id, x, y, z] of list) {
+    seen.add(id);
+    let f = flyingBananas.get(id);
+    if (!f) {
+      f = { mesh: makeBananaMesh() };
+      f.mesh.position.set(x, y, z);
+      scene.add(f.mesh);
+      flyingBananas.set(id, f);
+    }
+    f.tx = x; f.ty = y; f.tz = z;
+  }
+  for (const [id, f] of flyingBananas) {
+    if (seen.has(id)) continue;
+    scene.remove(f.mesh);
+    f.mesh.userData.dispose();
+    flyingBananas.delete(id);
+  }
+}
+
+const flashes = [];
+for (let i = 0; i < 3; i++) {
+  const m = new THREE.Mesh(
+    new THREE.SphereGeometry(1, 16, 12),
+    new THREE.MeshBasicMaterial({ color: 0xffb02e, transparent: true, depthWrite: false, fog: false }),
+  );
+  m.visible = false;
+  m.userData = { life: 0 };
+  scene.add(m);
+  flashes.push(m);
+}
+const chunkGeo = new THREE.BoxGeometry(0.16, 0.05, 0.32);
+const chunks = [];
+for (let i = 0; i < 36; i++) {
+  const m = new THREE.Mesh(chunkGeo, new THREE.MeshLambertMaterial({ color: i % 3 ? '#f2d23c' : '#fff3c4', transparent: true }));
+  m.visible = false;
+  m.userData = { life: 0, vx: 0, vy: 0, vz: 0 };
+  scene.add(m);
+  chunks.push(m);
+}
+
+function boom(x, y, z) {
+  const f = flashes.find((m) => !m.visible) || flashes[0];
+  f.position.set(x, y, z);
+  f.userData.life = 0.45;
+  f.visible = true;
+  let n = 0;
+  for (const c of chunks) {
+    if (c.visible || n >= 12) continue;
+    n++;
+    const a = Math.random() * Math.PI * 2;
+    const sp = 6 + Math.random() * 7;
+    c.position.set(x, y, z);
+    c.userData = { life: 1.2, vx: Math.cos(a) * sp, vy: 4 + Math.random() * 7, vz: Math.sin(a) * sp };
+    c.visible = true;
+  }
+  const dist = camera.position.distanceTo(new THREE.Vector3(x, y, z));
+  sfx.boom(Math.min(1, 30 / (dist + 12)));
+  if (dist < 25) {
+    shakeUntil = performance.now() + 450;
+    shakeAmp = 0.06 * (1 - dist / 25);
+  }
+}
+
+function updateBananaFx(dt) {
+  const k = Math.min(1, dt * 15);
+  for (const f of flyingBananas.values()) {
+    f.mesh.position.x += (f.tx - f.mesh.position.x) * k;
+    f.mesh.position.y += (f.ty - f.mesh.position.y) * k;
+    f.mesh.position.z += (f.tz - f.mesh.position.z) * k;
+    f.mesh.rotation.x += dt * 10;
+    f.mesh.rotation.y += dt * 6;
+  }
+  for (const f of flashes) {
+    if (!f.visible) continue;
+    f.userData.life -= dt;
+    if (f.userData.life <= 0) { f.visible = false; continue; }
+    const p = 1 - f.userData.life / 0.45;
+    f.scale.setScalar(0.5 + p * BANANA.radius);
+    f.material.opacity = 0.85 * (1 - p);
+  }
+  for (const c of chunks) {
+    if (!c.visible) continue;
+    const u = c.userData;
+    u.life -= dt;
+    if (u.life <= 0) { c.visible = false; continue; }
+    u.vy -= 20 * dt;
+    c.position.x += u.vx * dt;
+    c.position.y = Math.max(0.03, c.position.y + u.vy * dt);
+    c.position.z += u.vz * dt;
+    c.rotation.x += dt * 9;
+    c.rotation.z += dt * 7;
+    c.material.opacity = Math.min(1, u.life / 0.4);
+  }
+}
+
 /* ================================================================ zvuk (sve se generira, nema datoteka) */
 
 const sfx = (() => {
@@ -413,6 +633,43 @@ const sfx = (() => {
     head: () => { tone(1500, 0.08, 0.25, 'sine'); tone(2100, 0.14, 0.22, 'sine', 0.06); },
     kill: () => { tone(700, 0.08, 0.25, 'triangle'); tone(1050, 0.16, 0.25, 'triangle', 0.08); },
     hurt: () => tone(140, 0.18, 0.3, 'sawtooth'),
+    boom: (vol) => {
+      if (!ctx || vol < 0.01) return;
+      const t = ctx.currentTime;
+      const src = ctx.createBufferSource();
+      src.buffer = noise;
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.setValueAtTime(1200, t);
+      lp.frequency.exponentialRampToValueAtTime(70, t + 1.2);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(1.0 * vol, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 1.3);
+      src.connect(lp);
+      lp.connect(g);
+      g.connect(master);
+      src.start(t);
+      src.stop(t + 1.35);
+      tone(60, 0.5, 0.9 * vol, 'sine');
+    },
+    whoosh: () => {
+      if (!ctx) return;
+      const t = ctx.currentTime;
+      const src = ctx.createBufferSource();
+      src.buffer = noise;
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.setValueAtTime(600, t);
+      bp.frequency.exponentialRampToValueAtTime(2400, t + 0.25);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.35, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+      src.connect(bp);
+      bp.connect(g);
+      g.connect(master);
+      src.start(t);
+      src.stop(t + 0.32);
+    },
     bolt: () => { tone(2400, 0.02, 0.12); tone(1800, 0.02, 0.12, 'square', 0.12); },
     reload: () => { tone(900, 0.03, 0.12); tone(700, 0.03, 0.12, 'square', 0.9); tone(1200, 0.03, 0.12, 'square', 1.9); },
   };
@@ -424,6 +681,7 @@ const me = {
   id: 0, body: createBody(), yaw: 0, pitch: 0, eye: P.eye,
   hp: MAX_HP, alive: false, ammo: W.mag, reloading: false, reloadEnd: 0, lastShot: -1e9,
   scoped: false, scopeStart: 0, zoom: 0, spawnSeq: 0, protectUntil: 0, deadAt: 0, killer: '',
+  bananas: 0, streak: 0,
 };
 const input = { keys: new Set(), rmb: false };
 const roster = new Map(); // id -> { id, name, hue, kills, deaths, bot, alive, snaps, av }
@@ -447,6 +705,8 @@ let endInfo = null;
 let isAdmin = false;
 let cheats = {};
 let lostReason = '';
+let shakeUntil = 0;
+let shakeAmp = 0;
 const RAPID_COOLDOWN = 150; // ms, mora odgovarati serveru
 const cooldownMs = () => (cheats.rapid ? RAPID_COOLDOWN : W.cooldown * 1000);
 
@@ -455,7 +715,10 @@ function send(m) {
 }
 
 function addRoster(p) {
-  roster.set(p.id, { id: p.id, name: p.name, hue: p.hue, kills: p.kills || 0, deaths: p.deaths || 0, bot: !!p.bot, alive: false, snaps: [], av: null });
+  roster.set(p.id, {
+    id: p.id, name: p.name, hue: p.hue, kills: p.kills || 0, deaths: p.deaths || 0, bot: !!p.bot,
+    skin: SKINS.includes(p.skin) ? p.skin : 'klasik', alive: false, snaps: [], av: null,
+  });
 }
 
 function removeRoster(id) {
@@ -466,7 +729,7 @@ function removeRoster(id) {
 
 /* ================================================================ mreža */
 
-function connect(name, room, bots) {
+function connect(name, room, bots, skin) {
   $('play').disabled = true;
   $('lobbyError').textContent = 'Spajanje… (ako server spava, prvi put može trajati do minute)';
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -479,7 +742,7 @@ function connect(name, room, bots) {
   }, 60000);
   ws.onopen = () => {
     clearTimeout(timeout);
-    send({ t: 'join', name, room, bots });
+    send({ t: 'join', name, room, bots, skin });
   };
   ws.onmessage = (e) => {
     let m;
@@ -546,12 +809,27 @@ function handle(m) {
       endInfo = null;
       $('end').hidden = true;
       for (const r of roster.values()) { r.kills = 0; r.deaths = 0; }
+      me.bananas = 0;
+      me.streak = 0;
       centerMsg('NOVA RUNDA', 2000);
       break;
     case 'err':
       failLobby(m.msg);
       break;
     case 'admin': onAdminState(m); break;
+    case 'banana':
+      if (m.n > me.bananas) {
+        centerMsg('🍌 BANANA! Baci je tipkom G', 2500);
+        sfx.kill();
+      }
+      me.bananas = m.n;
+      break;
+    case 'streak': {
+      const r = roster.get(m.id);
+      if (r && m.id !== me.id) feedSystem(`${r.name} ima niz od ${m.n} i bananu!`);
+      break;
+    }
+    case 'boom': boom(m.x, m.y, m.z); break;
     case 'announce':
       centerMsg(m.text, 5000);
       feedSystem(`Admin: ${m.text}`);
@@ -573,6 +851,7 @@ function onWelcome(m) {
   inGame = true;
   $('lobby').hidden = true;
   $('hud').hidden = false;
+  destroyPreview();
   $('settingsPause').append($('settings'));
   $('roomInfo').textContent = `Soba: ${roomCode} · igrača: ${roster.size}`;
   $('pause').hidden = false;
@@ -623,6 +902,7 @@ function onSnap(m) {
     }
   }
   timeLeft = m.tl;
+  syncFlyingBananas(m.b || []);
 }
 
 function gunTip() {
@@ -666,16 +946,22 @@ function onKill(m) {
   const v = roster.get(m.v);
   if (k) k.kills = m.kk;
   if (v) v.deaths = m.vd;
-  feedKill(k, v, m.hs);
+  feedKill(k, v, m.hs, m.w === 'banana');
   if (m.v === me.id) {
     me.alive = false;
     me.hp = 0;
     me.scoped = false;
+    me.streak = 0;
     me.deadAt = performance.now();
-    $('deathBy').textContent = k ? `Srušio te ${k.name}${m.hs ? ' (headshot)' : ''}` : '';
+    let by = '';
+    if (k) by = m.w === 'banana' ? `Raznijela te banana od: ${k.name}` : `Srušio te ${k.name}${m.hs ? ' (headshot)' : ''}`;
+    $('deathBy').textContent = by;
     $('death').hidden = false;
   }
-  if (m.k === me.id) centerMsg(m.hs ? 'HEADSHOT!' : 'ELIMINACIJA', 1400);
+  if (m.k === me.id) {
+    me.streak++;
+    centerMsg(m.w === 'banana' ? 'BANANA!' : m.hs ? 'HEADSHOT!' : 'ELIMINACIJA', 1400);
+  }
   if (!$('board').hidden) renderBoard($('board'), 'Rezultati');
 }
 
@@ -718,9 +1004,9 @@ function playerColor(r) {
   return r ? `hsl(${r.hue} 70% 65%)` : '#fff';
 }
 
-function feedKill(k, v, hs) {
+function feedKill(k, v, hs, banana) {
   const row = feedRow(k?.id === me.id || v?.id === me.id ? 'mine' : '');
-  row.append(span(k ? k.name : '?', playerColor(k)), span('  ▸  '), span(v ? v.name : '?', playerColor(v)));
+  row.append(span(k ? k.name : '?', playerColor(k)), span(banana ? '  🍌  ' : '  ▸  '), span(v ? v.name : '?', playerColor(v)));
   if (hs) {
     const h = span('  HEADSHOT');
     h.className = 'hs';
@@ -802,6 +1088,16 @@ function shoot() {
   sfx.shot(1);
 }
 
+function throwBanana() {
+  if (!me.alive || ended) return;
+  if (!cheats.banana && me.bananas <= 0) return;
+  send({ t: 'throw', d: aimDir(me.yaw, me.pitch).map(r4) });
+  if (!cheats.banana) me.bananas--;
+  me.protectUntil = 0;
+  vmKick = 0.6;
+  sfx.whoosh();
+}
+
 function reload() {
   if (!me.alive || me.reloading || me.ammo >= W.mag) return;
   me.reloading = true;
@@ -856,6 +1152,11 @@ function updateMe(t, dt) {
   me.eye += (eyeTarget - me.eye) * Math.min(1, dt * 12);
   camera.position.set(b.x, b.y + me.eye, b.z);
   camera.rotation.set(me.pitch, me.yaw, me.alive ? 0 : 0.35);
+  if (t < shakeUntil) {
+    const a = shakeAmp * ((shakeUntil - t) / 450);
+    camera.rotation.x += (Math.random() - 0.5) * a;
+    camera.rotation.y += (Math.random() - 0.5) * a;
+  }
   const targetFov = me.scoped ? W.zoom[me.zoom] : BASE_FOV;
   if (Math.abs(camera.fov - targetFov) > 0.05) {
     camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 20);
@@ -886,7 +1187,7 @@ function updateOthers(t) {
       continue;
     }
     if (!r.av) {
-      r.av = makeAvatar(r.hue, r.name);
+      r.av = makeAvatar(r.hue, r.name, r.skin);
       setWallhack(r.av, !!cheats.wall);
       scene.add(r.av.root);
     }
@@ -979,7 +1280,10 @@ function hud(t) {
   setStyle('hpfill', 'background', hp > 50 ? 'var(--ok)' : hp > 25 ? 'var(--accent)' : 'var(--danger)');
   setText('ammo', me.reloading ? 'PUNJENJE…' : cheats.ammo ? '∞' : `${me.ammo} / ${W.mag}`);
   const mine = roster.get(me.id);
-  setText('kd', mine ? `Ubojstva ${mine.kills} · Smrti ${mine.deaths}` : '');
+  setText('kd', mine ? `Ubojstva ${mine.kills} · Smrti ${mine.deaths}${me.streak > 0 ? ` · Niz ${me.streak}` : ''}` : '');
+  const bananaShown = me.alive && (me.bananas > 0 || !!cheats.banana);
+  $('bananaHud').hidden = !bananaShown;
+  if (bananaShown) setText('bananaCount', cheats.banana ? '∞' : String(me.bananas));
   const tl = Math.max(0, timeLeft);
   setText('timer', ended ? 'KRAJ' : `${Math.floor(tl / 60)}:${String(tl % 60).padStart(2, '0')}`);
   setText('net', `${isAdmin ? 'ADMIN · ' : ''}${fps} FPS · ping ${Math.round(rtt)} ms`);
@@ -1031,6 +1335,7 @@ function frame(t) {
     updateMe(t, dt);
     updateOthers(t);
     updateFx(dt);
+    updateBananaFx(dt);
     updateViewmodel(t, dt);
     net(t);
     hud(t);
@@ -1038,6 +1343,10 @@ function frame(t) {
     const a = t * 0.00004;
     camera.position.set(Math.cos(a) * 85, 32, Math.sin(a) * 85);
     camera.lookAt(0, 2, 0);
+    if (preview && preview.av) {
+      preview.av.root.rotation.y = Math.PI + t * 0.0009;
+      preview.r.render(preview.sc, preview.cam);
+    }
   }
   renderer.clear();
   renderer.render(scene, camera);
@@ -1096,6 +1405,10 @@ document.addEventListener('mousemove', (e) => {
 document.addEventListener('mousedown', (e) => {
   if (!locked || !inGame) return;
   if (e.button === 0) shoot();
+  if (e.button === 1) {
+    e.preventDefault();
+    throwBanana();
+  }
   if (e.button === 2) input.rmb = true;
 });
 document.addEventListener('mouseup', (e) => {
@@ -1122,6 +1435,7 @@ document.addEventListener('keydown', (e) => {
   if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
   input.keys.add(e.code);
   if (e.code === 'KeyR') reload();
+  if (e.code === 'KeyG') throwBanana();
 });
 document.addEventListener('keyup', (e) => {
   input.keys.delete(e.code);
@@ -1140,6 +1454,44 @@ window.addEventListener('resize', () => {
 });
 
 /* ================================================================ izbornik */
+
+// Mali 3D pregled skina u izborniku. Gasi se čim uđeš u igru da ne troši memoriju.
+let preview = null;
+function initPreview() {
+  const box = $('skinPreview');
+  try {
+    const r = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    r.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    r.setSize(120, 150);
+    box.append(r.domElement);
+    const sc = new THREE.Scene();
+    sc.add(new THREE.HemisphereLight(0xffffff, 0x555555, 2.2));
+    const light = new THREE.DirectionalLight(0xffffff, 1.6);
+    light.position.set(2, 3, 2);
+    sc.add(light);
+    const cam = new THREE.PerspectiveCamera(32, 120 / 150, 0.1, 20);
+    cam.position.set(0, 1.15, 4.3);
+    cam.lookAt(0, 0.98, 0);
+    preview = { r, sc, cam, av: null };
+    setPreviewSkin(settings.skin);
+  } catch {
+    box.hidden = true;
+  }
+}
+function setPreviewSkin(skin) {
+  if (!preview) return;
+  if (preview.av) disposeAvatar(preview.av, preview.sc);
+  preview.av = makeAvatar(205, '', skin, false);
+  preview.sc.add(preview.av.root);
+}
+function destroyPreview() {
+  if (!preview) return;
+  if (preview.av) disposeAvatar(preview.av, preview.sc);
+  preview.r.dispose();
+  preview.r.forceContextLoss();
+  preview.r.domElement.remove();
+  preview = null;
+}
 
 function bindSettings() {
   const sens = $('sens'), quality = $('quality'), volume = $('volume');
@@ -1171,6 +1523,13 @@ function initLobby() {
   $('name').value = settings.name;
   $('room').value = params.get('soba') || settings.room;
   $('bots').value = String(settings.bots);
+  $('skin').value = SKINS.includes(settings.skin) ? settings.skin : 'klasik';
+  $('skin').addEventListener('change', () => {
+    settings.skin = $('skin').value;
+    saveSettings();
+    setPreviewSkin(settings.skin);
+  });
+  initPreview();
   const touchOnly = matchMedia('(pointer: coarse)').matches && !matchMedia('(pointer: fine)').matches;
   $('mobileWarn').hidden = !touchOnly;
 
@@ -1178,15 +1537,16 @@ function initLobby() {
     const name = $('name').value.trim();
     const room = $('room').value.trim() || 'razred';
     const bots = Number($('bots').value) || 0;
+    const skin = $('skin').value;
     if (!name) {
       $('lobbyError').textContent = 'Upiši ime.';
       $('name').focus();
       return;
     }
-    Object.assign(settings, { name, room, bots });
+    Object.assign(settings, { name, room, bots, skin });
     saveSettings();
     sfx.init();
-    connect(name, room, bots);
+    connect(name, room, bots, skin);
   };
   $('play').addEventListener('click', start);
   for (const id of ['name', 'room']) {
