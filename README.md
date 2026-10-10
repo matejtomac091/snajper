@@ -4,7 +4,8 @@
 
 **Igra:** https://snajper.onrender.com
 
-Render sam objavi novu verziju čim se promijeni kod na grani `main`.
+Servis je spojen na ovaj repozitorij preko javnog linka. Nakon promjene koda na Renderu klikni
+**Manual Deploy → Deploy latest commit** (automatsko objavljivanje za javne linkove nije zajamčeno).
 
 ## Stavljanje na Render (jednom, ~10 minuta)
 
