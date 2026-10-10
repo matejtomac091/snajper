@@ -17,6 +17,7 @@ import { rayWorld, rayHitbox } from './public/shared/ray.js';
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const THREE_DIR = path.join(ROOT, 'node_modules', 'three', 'build');
+const THREE_ADDONS_DIR = path.join(ROOT, 'node_modules', 'three', 'examples', 'jsm');
 const PORT = Number(process.env.PORT) || 3000;
 const MATCH_SECONDS = Number(process.env.MATCH_TIME) || MATCH_TIME;
 const END_SECONDS = Number(process.env.END_TIME) || END_TIME;
@@ -79,6 +80,9 @@ function serveStatic(req, res) {
   if (pathname.startsWith('/three/')) {
     base = THREE_DIR;
     rel = pathname.slice('/three'.length);
+  } else if (pathname.startsWith('/three-addons/')) {
+    base = THREE_ADDONS_DIR;
+    rel = pathname.slice('/three-addons'.length);
   }
   if (rel.endsWith('/')) rel += 'index.html';
   const file = path.join(base, rel);
@@ -96,7 +100,7 @@ function serveStatic(req, res) {
     res.writeHead(200, {
       'content-type': MIME[path.extname(file)] || 'application/octet-stream',
       'content-length': st.size,
-      'cache-control': base === THREE_DIR ? 'public, max-age=604800' : 'no-cache',
+      'cache-control': base === PUBLIC_DIR ? 'no-cache' : 'public, max-age=604800',
     });
     if (req.method === 'HEAD') {
       res.end();
