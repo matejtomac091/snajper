@@ -1,4 +1,5 @@
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 
 :root {
   --bg: #0d1016;
@@ -215,3 +216,26 @@ summary { cursor: pointer; }
 .card tr.me td { color: var(--accent); font-weight: 800; }
 .card .bot { margin-left: 6px; font-size: 11px; color: var(--muted); }
 .card .next { margin-top: 12px; color: var(--muted); font-size: 14px; }
+
+/* ---------- admin ---------- */
+button.tiny {
+  display: block; width: auto; margin: 14px auto 0; padding: 2px 6px;
+  font-size: 11px; font-weight: 500; letter-spacing: 0;
+  color: var(--muted); background: none; opacity: 0.45;
+}
+button.tiny:hover { opacity: 0.9; filter: none; }
+button.small { margin-top: 0; padding: 9px 10px; font-size: 13px; }
+#adminBox { margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
+#adminLogin, .admin-row { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
+#adminLogin input, .admin-row input { margin-top: 0; flex: 1; }
+#adminLogin button, .admin-row button { flex: 0 0 auto; width: auto; }
+.admin-row button { flex: 1; }
+.admin-row input + button { flex: 0 0 auto; }
+.admin-title { margin: 14px 0 6px; font-size: 12px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--accent); }
+.admin-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; }
+label.check { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; color: var(--text); cursor: pointer; }
+label.check input { display: inline-block; width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+#adminPlayers { display: flex; flex-direction: column; gap: 4px; }
+.admin-player { display: flex; justify-content: space-between; align-items: center; font-size: 13px; padding: 4px 0; border-top: 1px solid var(--line); }
+.admin-player button { width: auto; margin: 0; padding: 4px 10px; font-size: 12px; letter-spacing: 0; color: var(--text); background: rgba(255, 90, 79, 0.25); }
+#adminMsg:empty { display: none; }

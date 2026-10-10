@@ -30,7 +30,7 @@ export const W = {
   cooldown: 1.15,    // s, repetiranje između metaka
   reload: 2.3,       // s
   range: 400,
-  damage: { head: 100, body: 60, legs: 40 },
+  damage: { head: 100, body: 100, legs: 100 }, // snajper ubija iz jednog pogotka, gdje god pogodi
   scopeIn: 0.22,     // s dok nišan ne postane precizan
   zoom: [20, 9],     // FOV za 4x i 8x
   spreadHip: 0.06,   // radijani, pucanje bez nišana

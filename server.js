@@ -1,6 +1,7 @@
 // Snajper — server. Poslužuje igru i vodi sobe preko WebSocketa.
 // Server odlučuje o svemu što je bitno (pogoci, šteta, bodovi), pa varanje u pregledniku ne pomaže puno.
 import http from 'node:http';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,6 +20,10 @@ const THREE_DIR = path.join(ROOT, 'node_modules', 'three', 'build');
 const PORT = Number(process.env.PORT) || 3000;
 const MATCH_SECONDS = Number(process.env.MATCH_TIME) || MATCH_TIME;
 const END_SECONDS = Number(process.env.END_TIME) || END_TIME;
+// Lozinka za admin panel. Postavlja se na Renderu (Environment → ADMIN_KEY), nikad u kodu jer je repozitorij javan.
+const ADMIN_KEY = String(process.env.ADMIN_KEY || '');
+const CHEATS = ['god', 'ammo', 'rapid', 'aim', 'speed', 'fly', 'wall'];
+const RAPID_COOLDOWN = 150; // ms
 
 const MAP = buildMap();
 const BOXES = MAP.boxes;
@@ -175,6 +180,7 @@ function makePlayer(room, name, ws, bot) {
     respawnAt: t, protectUntil: 0,
     ammo: W.mag, reloadUntil: 0, lastShot: -1e9,
     spawnSeq: 0, lastMove: t, budget: 0, hist: [], rtt: 80, strikes: 0,
+    admin: false, adminTries: 0, cheats: {},
     body: null,
     ai: bot ? {
       target: null, readyAt: 0, nextScan: 0, nextShotGap: 0, goal: null, goalUntil: 0,
@@ -276,16 +282,23 @@ function onUpdate(p, m) {
   const crouch = !!m.c;
   const dh = Math.hypot(x - p.x, z - p.z);
   const A = MAP.arena;
-  const inWall = blocked(BOXES, x, y + 0.05, z, (crouch ? P.crouchHeight : P.height) - 0.1, P.radius - 0.08);
-  if (dh > p.budget || y - p.y > 1.9 || y < -0.05 || y > MAX_Y || Math.abs(x) > A || Math.abs(z) > A || inWall) {
-    p.strikes++;
-    send(p, { t: 'corr', x: r3(p.x), y: r3(p.y), z: r3(p.z) });
-    return;
+  if (p.admin) {
+    // Admin s brzinom ili letenjem preskače provjeru kretanja, ali ostaje unutar arene.
+    p.x = clamp(x, -A, A);
+    p.y = clamp(y, 0, 60);
+    p.z = clamp(z, -A, A);
+  } else {
+    const inWall = blocked(BOXES, x, y + 0.05, z, (crouch ? P.crouchHeight : P.height) - 0.1, P.radius - 0.08);
+    if (dh > p.budget || y - p.y > 1.9 || y < -0.05 || y > MAX_Y || Math.abs(x) > A || Math.abs(z) > A || inWall) {
+      p.strikes++;
+      send(p, { t: 'corr', x: r3(p.x), y: r3(p.y), z: r3(p.z) });
+      return;
+    }
+    p.budget -= dh;
+    p.x = x;
+    p.y = y;
+    p.z = z;
   }
-  p.budget -= dh;
-  p.x = x;
-  p.y = y;
-  p.z = z;
   p.yaw = yaw;
   p.pitch = clamp(pitch, -1.55, 1.55);
   p.crouch = crouch;
@@ -313,13 +326,18 @@ function onReload(p) {
 /* ------------------------------------------------------------------ pucanje */
 
 function canFire(p, t) {
+  if (p.cheats.ammo) {
+    p.reloadUntil = 0;
+    p.ammo = W.mag;
+  }
   if (p.reloadUntil) {
     if (t < p.reloadUntil - 150) return false;
     p.reloadUntil = 0;
     p.ammo = W.mag;
   }
   if (p.ammo <= 0) return false;
-  return t - p.lastShot >= W.cooldown * 1000 - 120;
+  const cooldown = p.cheats.rapid ? RAPID_COOLDOWN : W.cooldown * 1000;
+  return t - p.lastShot >= cooldown - 120;
 }
 
 // Nasumično odstupanje unutar stošca širine s (radijani).
@@ -347,12 +365,16 @@ function fire(room, p, dx, dy, dz, forcedSpread) {
   if (room.state !== 'play' || !p.alive) return;
   const t = now();
   if (!canFire(p, t)) return;
-  p.ammo--;
   p.lastShot = t;
   p.protectUntil = 0;
-  if (p.ammo <= 0) p.reloadUntil = t + W.reload * 1000;
+  if (!p.cheats.ammo) {
+    p.ammo--;
+    if (p.ammo <= 0) p.reloadUntil = t + W.reload * 1000;
+  }
 
-  const spread = forcedSpread ?? spreadFor(p.scoped, (t - p.scopeStart) / 1000, speedOf(p) > 1.2, !p.ground, p.crouch);
+  const spread = p.cheats.aim
+    ? 0
+    : forcedSpread ?? spreadFor(p.scoped, (t - p.scopeStart) / 1000, speedOf(p) > 1.2, !p.ground, p.crouch);
   [dx, dy, dz] = jitter(dx, dy, dz, spread);
 
   const ox = p.x;
@@ -382,6 +404,10 @@ function fire(room, p, dx, dy, dz, forcedSpread) {
 }
 
 function damage(room, from, to, part, t) {
+  if (to.cheats.god) {
+    send(from, { t: 'hit', part, kill: false });
+    return;
+  }
   to.hp -= W.damage[part];
   const kill = to.hp <= 0;
   send(from, { t: 'hit', part, kill });
@@ -409,8 +435,12 @@ function randomGround() {
 
 function syncBots(room) {
   const humans = room.humans();
-  // Botovi popunjavaju sobu dok je praznjikava i odlaze kako ulaze pravi igrači.
-  const want = clamp(room.botFill - (humans - 1), 0, Math.min(room.botFill, MAX_PLAYERS - humans));
+  // Botovi popunjavaju sobu dok je praznjikava i odlaze kako ulaze pravi igrači,
+  // osim kad admin ručno postavi broj botova: tada ostaju koliko je rekao.
+  const freeSlots = MAX_PLAYERS - humans;
+  const want = room.botFixed
+    ? clamp(room.botFill, 0, freeSlots)
+    : clamp(room.botFill - (humans - 1), 0, Math.min(room.botFill, freeSlots));
   const bots = [...room.players.values()].filter((p) => p.bot);
   if (bots.length < want) {
     const name = BOT_NAMES[room.botSerial++ % BOT_NAMES.length];
@@ -581,6 +611,83 @@ setInterval(() => {
   for (const room of rooms.values()) tickRoom(room, t);
 }, 1000 / TICK_RATE);
 
+/* ------------------------------------------------------------------ admin */
+
+function sameSecret(a, b) {
+  const ha = crypto.createHash('sha256').update(a).digest();
+  const hb = crypto.createHash('sha256').update(b).digest();
+  return crypto.timingSafeEqual(ha, hb);
+}
+
+function adminState(p) {
+  return { t: 'admin', ok: true, cheats: p.cheats };
+}
+
+function onAdminLogin(room, p, m) {
+  if (p.admin) {
+    send(p, adminState(p));
+    return;
+  }
+  if (!ADMIN_KEY) {
+    send(p, { t: 'admin', ok: false, msg: 'Admin nije uključen: na Renderu nije postavljen ADMIN_KEY.' });
+    return;
+  }
+  // Ne zaključavamo po IP adresi jer cijela škola izlazi na internet s iste adrese.
+  if (p.adminTries >= 5) {
+    send(p, { t: 'admin', ok: false, msg: 'Previše pokušaja. Izađi i uđi ponovno u igru.' });
+    return;
+  }
+  p.adminTries++;
+  if (sameSecret(String(m.key ?? ''), ADMIN_KEY)) {
+    p.admin = true;
+    console.log(`admin prijava: "${p.name}" u sobi "${room.code}"`);
+    send(p, adminState(p));
+  } else {
+    setTimeout(() => send(p, { t: 'admin', ok: false, msg: 'Kriva lozinka.' }), 800);
+  }
+}
+
+function onAdmin(room, p, m) {
+  const t = now();
+  switch (m.a) {
+    case 'cheat':
+      if (CHEATS.includes(m.name)) p.cheats[m.name] = !!m.on;
+      if (p.cheats.god && p.alive) p.hp = MAX_HP;
+      send(p, adminState(p));
+      break;
+    case 'kick': {
+      const target = room.players.get(Math.floor(+m.id));
+      if (!target || target === p) return;
+      if (target.bot) {
+        room.botFixed = true;
+        room.botFill = Math.max(0, [...room.players.values()].filter((o) => o.bot).length - 1);
+        room.players.delete(target.id);
+        room.broadcast({ t: 'leave', id: target.id });
+      } else {
+        send(target, { t: 'kicked' });
+        setTimeout(() => target.ws.close(4001, 'kick'), 100);
+      }
+      break;
+    }
+    case 'bots':
+      room.botFixed = true;
+      room.botFill = clamp(Math.floor(+m.n) || 0, 0, MAX_BOTS);
+      break;
+    case 'restart':
+      resetMatch(room, t);
+      break;
+    case 'end':
+      if (room.state === 'play') endMatch(room, t);
+      break;
+    case 'say': {
+      const text = String(m.text ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 80);
+      if (text) room.broadcast({ t: 'announce', text });
+      break;
+    }
+    default: break;
+  }
+}
+
 /* ------------------------------------------------------------------ WebSocket */
 
 const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 2048 });
@@ -646,6 +753,8 @@ wss.on('connection', (ws) => {
         player.rtt = clamp(+m.rtt || 0, 0, 1000);
         send(player, { t: 'pong', ct: +m.ct || 0 });
         break;
+      case 'alogin': onAdminLogin(room, player, m); break;
+      case 'admin': if (player.admin) onAdmin(room, player, m); break;
       default: break;
     }
   });

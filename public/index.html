@@ -48,11 +48,14 @@
 
   <div id="settings" class="settings">
     <label>Osjetljivost miša <span id="sensVal"></span><input id="sens" type="range" min="0.2" max="3" step="0.05"></label>
-    <label>Kvaliteta slike
+    <label>Rezolucija <span id="resVal"></span>
       <select id="quality">
-        <option value="0.5">Niska (najbrže)</option>
+        <option value="0.35">Vrlo niska (najslabija računala)</option>
+        <option value="0.5">Niska</option>
         <option value="0.75">Srednja</option>
         <option value="1">Visoka</option>
+        <option value="1.5">Vrlo visoka</option>
+        <option value="2">Ultra (samo jaka računala)</option>
       </select>
     </label>
     <label>Glasnoća<input id="volume" type="range" min="0" max="1" step="0.05"></label>
@@ -103,6 +106,44 @@
         <li><b>Tab</b> rezultati</li>
       </ul>
       <button id="leave" class="ghost" type="button">Izađi u izbornik</button>
+      <button id="adminLink" class="tiny" type="button">admin</button>
+      <div id="adminBox" hidden>
+        <div id="adminLogin">
+          <input id="adminKey" type="password" placeholder="Admin lozinka" autocomplete="off">
+          <button id="adminGo" class="ghost small" type="button">Prijava</button>
+        </div>
+        <p id="adminMsg" class="hint"></p>
+        <div id="adminPanel" hidden>
+          <div class="admin-title">Cheatovi (samo za tebe)</div>
+          <div class="admin-grid">
+            <label class="check"><input type="checkbox" data-cheat="god"> Besmrtnost</label>
+            <label class="check"><input type="checkbox" data-cheat="ammo"> Beskonačni meci</label>
+            <label class="check"><input type="checkbox" data-cheat="rapid"> Brza paljba</label>
+            <label class="check"><input type="checkbox" data-cheat="aim"> Savršen nišan</label>
+            <label class="check"><input type="checkbox" data-cheat="speed"> Brzina i skok</label>
+            <label class="check"><input type="checkbox" data-cheat="fly"> Letenje kroz zidove</label>
+            <label class="check"><input type="checkbox" data-cheat="wall"> Vidi kroz zidove</label>
+          </div>
+          <p class="hint">Letenje: Space gore, Shift dolje.</p>
+          <div class="admin-title">Soba</div>
+          <div class="admin-row">
+            <button class="ghost small" type="button" data-act="restart">Nova runda</button>
+            <button class="ghost small" type="button" data-act="end">Završi rundu</button>
+          </div>
+          <label>Botovi
+            <select id="adminBots">
+              <option value="0">0</option><option value="1">1</option><option value="2">2</option>
+              <option value="3">3</option><option value="4">4</option><option value="6">6</option><option value="8">8</option>
+            </select>
+          </label>
+          <div class="admin-row">
+            <input id="adminSay" maxlength="80" placeholder="Poruka svima" autocomplete="off">
+            <button id="adminSayGo" class="ghost small" type="button">Pošalji</button>
+          </div>
+          <div class="admin-title">Igrači</div>
+          <div id="adminPlayers"></div>
+        </div>
+      </div>
     </div>
   </div>
 

@@ -45,17 +45,32 @@ Space skok · Shift ili C čučanj · R punjenje · Tab rezultati · Esc pauza
 
 ## Pravila
 
-- Glava ubija iz jednog metka (100), tijelo 60, noge 40. Svatko ima 100 života.
+- Svaki pogodak ubija, gdje god pogodi (glava, tijelo, noge). Headshot se samo posebno označi.
 - Puška ima 5 metaka i repetira se 1.15 s između hitaca. Bez nišana metak ide jako široko.
 - Nišan postaje precizan nakon 0.22 s. Kretanje i skakanje ga kvare, a čučanj ga popravlja.
 - Kad netko nišani, vidi mu se odsjaj na glavi.
 - 1.5 s nakon pojave te nitko ne može pogoditi (prekida se kad pucaš).
 - Runda traje 5 minuta. Pobjeđuje tko ima najviše ubojstava.
 
-## Slaba računala
+## Rezolucija
 
-U postavkama stavi **Kvaliteta slike: Niska**. Gore desno piše FPS: ispod 30 se teško cilja.
-Koristite Chrome ili Edge, ne Internet Explorer.
+Igra kreće na **Niskoj** rezoluciji (pola ekrana) da radi i na slabim računalima.
+U Postavkama (u izborniku ili na Esc) može se birati od **Vrlo niske** do **Ultra** (dvostruka rezolucija,
+samo za jaka računala). Pored naziva piše stvarna rezolucija. Gore desno piše FPS: ispod 30 se teško cilja.
+Koristite Chrome ili Edge.
+
+## Admin panel
+
+1. Na Renderu: **snajper → Environment → Add Environment Variable**,
+   Key `ADMIN_KEY`, Value tvoja lozinka, pa **Save, rebuild, and deploy**.
+   Lozinka se ne smije pisati u kod jer je repozitorij javan.
+2. U igri pritisni **Esc** i na dnu klikni mali tekst **admin**, upiši lozinku.
+
+Cheatovi (vrijede samo za tebe): besmrtnost, beskonačni meci, brza paljba, savršen nišan,
+brzina i skok, letenje kroz zidove (Space gore, Shift dolje), vidi kroz zidove.
+Soba: nova runda, završi rundu, broj botova, poruka svima, izbaci igrača.
+
+Lozinka se pamti samo dok je kartica otvorena. Izbačeni igrač može ponovno ući.
 
 ## Za razvoj
 

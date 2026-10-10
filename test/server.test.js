@@ -153,14 +153,14 @@ async function combatTests(port) {
   assert.deepEqual([sp.x, sp.z], [-64, -25]);
   console.log('  ponovna pojava nakon 3 s ✔');
 
-  // pogodak u tijelo = 60, ne ubija
+  // snajper ubija iz jednog pogotka i kad pogodi tijelo
   await sleep(1700);
   A.send({ t: 'shoot', d: dirTo(eyeA, [B.me.x, 1.1, B.me.z]) });
   const hit2 = await A.wait('hit');
   assert.equal(hit2.part, 'body');
-  assert.equal(hit2.kill, false);
-  assert.equal((await B.wait('dmg')).hp, 40);
-  console.log('  pogodak u tijelo: 60 štete ✔');
+  assert.equal(hit2.kill, true);
+  assert.equal((await B.wait('dmg')).hp, 0);
+  console.log('  pogodak u tijelo ubija iz jednog metka ✔');
 
   // punjenje: dok traje, pucanje se odbija
   A.send({ t: 'reload' });
@@ -175,12 +175,19 @@ async function combatTests(port) {
   // kraj runde i nova runda
   const end = await A.wait('end', () => true, 15000);
   assert.equal(end.board[0].name, 'Ana');
-  assert.equal(end.board[0].kills, 1);
+  assert.equal(end.board[0].kills, 2);
   A.send({ t: 'shoot', d: [0, 0, 1] });
   await A.none('shot', () => true, 1300);
   await A.wait('reset', () => true, 5000);
   await A.wait('spawn', (m) => m.q === 2, 3000);
   console.log('  kraj runde, rezultati i nova runda ✔');
+
+  // admin bez lozinke na serveru je isključen
+  A.send({ t: 'alogin', key: 'bilo-sto' });
+  const noAdmin = await A.wait('admin');
+  assert.equal(noAdmin.ok, false);
+  assert.match(noAdmin.msg, /ADMIN_KEY/);
+  console.log('  bez ADMIN_KEY nema admina ✔');
 
   // izlazak
   B.close();
@@ -227,6 +234,77 @@ async function botTests(port) {
   D.close();
 }
 
+async function adminTests(port) {
+  const A = new Client(port);
+  const M = new Client(port);
+  await A.connect('Igrac', 'adm');
+  await M.connect('Matej', 'adm');
+  await A.wait('spawn');
+  await M.wait('spawn');
+  A.keepAlive({ s: 1 });
+  M.keepAlive({ s: 1 });
+
+  A.send({ t: 'admin', a: 'restart' });
+  await A.none('reset', () => true, 500);
+  console.log('  obični igrač ne može admin naredbe ✔');
+
+  M.send({ t: 'alogin', key: 'krivo' });
+  const bad = await M.wait('admin');
+  assert.equal(bad.ok, false);
+  assert.match(bad.msg, /Kriva/);
+  M.send({ t: 'alogin', key: 'tajna-123' });
+  await M.wait('admin', (m) => m.ok);
+  console.log('  kriva lozinka odbijena, prava prolazi ✔');
+
+  M.send({ t: 'admin', a: 'cheat', name: 'god', on: true });
+  await M.wait('admin', (m) => m.ok && m.cheats.god);
+  await sleep(1600);
+  A.send({ t: 'shoot', d: dirTo([A.me.x, 1.6, A.me.z], [M.me.x, 1.56, M.me.z]) });
+  const h = await A.wait('hit');
+  assert.equal(h.kill, false);
+  await M.none('dmg', () => true, 300);
+  console.log('  besmrtnost: headshot ne ubija admina ✔');
+
+  M.send({ t: 'admin', a: 'cheat', name: 'rapid', on: true });
+  M.send({ t: 'admin', a: 'cheat', name: 'ammo', on: true });
+  await M.wait('admin', (m) => m.ok && m.cheats.rapid && m.cheats.ammo);
+  const before = M.log.filter((m) => m.t === 'shot' && m.id === M.welcome.id).length;
+  for (let i = 0; i < 8; i++) {
+    M.send({ t: 'shoot', d: [1, -0.05, 0] });
+    await sleep(200);
+  }
+  await sleep(200);
+  const fired = M.log.filter((m) => m.t === 'shot' && m.id === M.welcome.id).length - before;
+  assert.equal(fired, 8, `brza paljba + beskonačni meci: ${fired}/8 hitaca`);
+  console.log('  brza paljba i beskonačni meci: 8 hitaca u 1.6 s ✔');
+
+  M.send({ t: 'shoot', d: dirTo([M.me.x, 1.6, M.me.z], [A.me.x, 0.4, A.me.z]) });
+  const legs = await M.wait('hit', (m) => m.part === 'legs');
+  assert.equal(legs.kill, true);
+  console.log('  pogodak u noge ubija iz jednog metka ✔');
+
+  M.send({ t: 'u', x: M.me.x, y: 30, z: M.me.z, yaw: 0, pitch: 0, c: 0, g: 0, s: 0, q: M.me.q });
+  await M.none('corr', () => true, 300);
+  console.log('  admin smije letjeti ✔');
+
+  M.send({ t: 'admin', a: 'bots', n: 2 });
+  await M.wait('join', (m) => m.bot, 2000);
+  await M.wait('join', (m) => m.bot, 2000);
+  console.log('  admin dodaje botove ✔');
+
+  M.send({ t: 'admin', a: 'say', text: 'Pozdrav razrede' });
+  await A.wait('announce', (m) => m.text === 'Pozdrav razrede');
+  console.log('  poruka svima ✔');
+
+  const closed = new Promise((resolve) => A.ws.on('close', resolve));
+  M.send({ t: 'admin', a: 'kick', id: A.welcome.id });
+  await A.wait('kicked');
+  await closed;
+  console.log('  admin izbacuje igrača ✔');
+  A.close();
+  M.close();
+}
+
 export async function run() {
   const s1 = await startServer(3101, { SPAWNS: '-64,-45;-64,-25', MATCH_TIME: '16', END_TIME: '3' });
   try {
@@ -236,6 +314,14 @@ export async function run() {
     s1.proc.kill();
   }
   assert.equal(s1.err(), '', `greške na serveru: ${s1.err()}`);
+
+  const s3 = await startServer(3103, { SPAWNS: '-64,-45;-64,-25', ADMIN_KEY: 'tajna-123' });
+  try {
+    await adminTests(3103);
+  } finally {
+    s3.proc.kill();
+  }
+  assert.equal(s3.err(), '', `greške na serveru: ${s3.err()}`);
 
   const s2 = await startServer(3102);
   try {

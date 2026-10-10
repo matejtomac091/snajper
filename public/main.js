@@ -15,7 +15,7 @@ const angDiff = (a, b) => wrap(b - a);
 
 /* ================================================================ postavke */
 
-const DEFAULTS = { name: '', room: 'razred', bots: 0, sens: 1, quality: 0.75, volume: 0.7 };
+const DEFAULTS = { name: '', room: 'razred', bots: 0, sens: 1, quality: 0.5, volume: 0.7 };
 const settings = (() => {
   try {
     return { ...DEFAULTS, ...JSON.parse(localStorage.getItem('snajper') || '{}') };
@@ -46,9 +46,12 @@ canvas.id = 'game';
 document.body.prepend(canvas);
 renderer.autoClear = false;
 
+// quality je omjer piksela: 0.5 = pola rezolucije ekrana (brzo), 2 = dvostruka (oštro, samo jaka računala).
 function applyQuality() {
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1) * settings.quality);
+  renderer.setPixelRatio(settings.quality);
   renderer.setSize(window.innerWidth, window.innerHeight);
+  const el = document.getElementById('resVal');
+  if (el) el.textContent = `${canvas.width} × ${canvas.height}`;
 }
 applyQuality();
 
@@ -217,6 +220,15 @@ function setProtected(av, p) {
     m.transparent = p;
     m.opacity = p ? 0.45 : 1;
   }
+}
+
+// Vidi kroz zidove: likovi se crtaju preko svega.
+function setWallhack(av, on) {
+  av.root.traverse((o) => {
+    if (!o.material) return;
+    o.material.depthTest = !on;
+    o.renderOrder = on ? 10 : 0;
+  });
 }
 
 function disposeAvatar(av) {
@@ -432,6 +444,11 @@ let dmgDirUntil = 0;
 let vignetteUntil = 0;
 let centerUntil = 0;
 let endInfo = null;
+let isAdmin = false;
+let cheats = {};
+let lostReason = '';
+const RAPID_COOLDOWN = 150; // ms, mora odgovarati serveru
+const cooldownMs = () => (cheats.rapid ? RAPID_COOLDOWN : W.cooldown * 1000);
 
 function send(m) {
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(m));
@@ -475,7 +492,7 @@ function connect(name, room, bots) {
   };
   ws.onclose = () => {
     clearTimeout(timeout);
-    if (inGame) showLost('Server je prekinuo vezu ili je pao internet.');
+    if (inGame) showLost(lostReason || 'Server je prekinuo vezu ili je pao internet.');
     else failLobby($('lobbyError').textContent.startsWith('Spajanje') ? 'Veza nije uspjela. Pokušaj ponovno.' : $('lobbyError').textContent);
   };
 }
@@ -509,11 +526,13 @@ function handle(m) {
     case 'join':
       addRoster(m);
       feedSystem(`${m.name} je ušao`);
+      renderAdminPlayers();
       break;
     case 'leave': {
       const r = roster.get(m.id);
       if (r) feedSystem(`${r.name} je izašao`);
       removeRoster(m.id);
+      renderAdminPlayers();
       break;
     }
     case 'pong': {
@@ -532,6 +551,14 @@ function handle(m) {
     case 'err':
       failLobby(m.msg);
       break;
+    case 'admin': onAdminState(m); break;
+    case 'announce':
+      centerMsg(m.text, 5000);
+      feedSystem(`Admin: ${m.text}`);
+      break;
+    case 'kicked':
+      lostReason = 'Admin te izbacio iz sobe.';
+      break;
     default: break;
   }
 }
@@ -549,6 +576,8 @@ function onWelcome(m) {
   $('settingsPause').append($('settings'));
   $('roomInfo').textContent = `Soba: ${roomCode} · igrača: ${roster.size}`;
   $('pause').hidden = false;
+  const savedKey = readAdminKey();
+  if (savedKey) send({ t: 'alogin', key: savedKey });
   try {
     history.replaceState(null, '', `?soba=${encodeURIComponent(roomCode)}`);
   } catch {
@@ -748,7 +777,7 @@ function renderBoard(el, title) {
 function shoot() {
   const t = performance.now();
   if (!me.alive || ended || me.reloading) return;
-  if (t - me.lastShot < W.cooldown * 1000) return;
+  if (t - me.lastShot < cooldownMs()) return;
   if (me.ammo <= 0) {
     reload();
     return;
@@ -756,15 +785,15 @@ function shoot() {
   sendUpdate(t);
   const d = aimDir(me.yaw, me.pitch);
   send({ t: 'shoot', d: d.map(r4) });
-  me.ammo--;
+  if (!cheats.ammo) me.ammo--;
   me.lastShot = t;
-  me.scoped = false;
+  if (!cheats.rapid) me.scoped = false;
   me.protectUntil = 0;
   if (me.ammo <= 0) {
     me.reloading = true;
     me.reloadEnd = t + W.reload * 1000;
     setTimeout(() => sfx.reload(), 300);
-  } else {
+  } else if (!cheats.rapid) {
     setTimeout(() => sfx.bolt(), 380);
   }
   me.pitch = Math.min(1.5, me.pitch + 0.03);
@@ -797,7 +826,7 @@ function updateMe(t, dt) {
       r = (k.has('KeyD') || k.has('ArrowRight') ? 1 : 0) - (k.has('KeyA') || k.has('ArrowLeft') ? 1 : 0);
     }
     const sy = Math.sin(me.yaw), cy = Math.cos(me.yaw);
-    const boltReady = t - me.lastShot >= W.cooldown * 1000;
+    const boltReady = t - me.lastShot >= cooldownMs();
     const wantScope = locked && input.rmb && !me.reloading && boltReady && !ended;
     if (wantScope && !me.scoped) {
       me.scoped = true;
@@ -805,13 +834,21 @@ function updateMe(t, dt) {
     } else if (!wantScope && me.scoped) {
       me.scoped = false;
     }
-    stepBody(b, {
-      wx: -sy * f + cy * r,
-      wz: -cy * f - sy * r,
-      jump: locked && k.has('Space'),
-      crouch: locked && (k.has('ShiftLeft') || k.has('ShiftRight') || k.has('KeyC')),
-      scoped: me.scoped,
-    }, dt, MAP.boxes);
+    const up = locked && k.has('Space');
+    const down = locked && (k.has('ShiftLeft') || k.has('ShiftRight') || k.has('KeyC'));
+    if (cheats.fly) {
+      fly(b, f, r, up, down, dt);
+    } else {
+      stepBody(b, {
+        wx: -sy * f + cy * r,
+        wz: -cy * f - sy * r,
+        jump: up,
+        crouch: down,
+        scoped: me.scoped,
+        speedMul: cheats.speed ? 2 : 1,
+        jumpMul: cheats.speed ? 1.6 : 1,
+      }, dt, MAP.boxes);
+    }
   } else {
     me.scoped = false;
   }
@@ -826,6 +863,20 @@ function updateMe(t, dt) {
   }
 }
 
+// Admin letenje: bez gravitacije i zidova, u smjeru pogleda.
+function fly(b, f, r, up, down, dt) {
+  const speed = (cheats.speed ? 30 : 15) * dt;
+  const [fx, fy, fz] = aimDir(me.yaw, me.pitch);
+  const rx = Math.cos(me.yaw), rz = -Math.sin(me.yaw);
+  const A = MAP.arena - 0.5;
+  b.x = Math.max(-A, Math.min(A, b.x + (fx * f + rx * r) * speed));
+  b.z = Math.max(-A, Math.min(A, b.z + (fz * f + rz * r) * speed));
+  b.y = Math.max(0, Math.min(58, b.y + (fy * f + (up ? 1 : 0) - (down ? 1 : 0)) * speed));
+  b.vx = b.vy = b.vz = 0;
+  b.onGround = b.y <= 0;
+  b.crouch = false;
+}
+
 function updateOthers(t) {
   const rt = t - INTERP_DELAY;
   for (const r of roster.values()) {
@@ -836,6 +887,7 @@ function updateOthers(t) {
     }
     if (!r.av) {
       r.av = makeAvatar(r.hue, r.name);
+      setWallhack(r.av, !!cheats.wall);
       scene.add(r.av.root);
     }
     const s = r.snaps;
@@ -925,19 +977,19 @@ function hud(t) {
   setText('hp', String(hp));
   setStyle('hpfill', 'width', `${hp}%`);
   setStyle('hpfill', 'background', hp > 50 ? 'var(--ok)' : hp > 25 ? 'var(--accent)' : 'var(--danger)');
-  setText('ammo', me.reloading ? 'PUNJENJE…' : `${me.ammo} / ${W.mag}`);
+  setText('ammo', me.reloading ? 'PUNJENJE…' : cheats.ammo ? '∞' : `${me.ammo} / ${W.mag}`);
   const mine = roster.get(me.id);
   setText('kd', mine ? `Ubojstva ${mine.kills} · Smrti ${mine.deaths}` : '');
   const tl = Math.max(0, timeLeft);
   setText('timer', ended ? 'KRAJ' : `${Math.floor(tl / 60)}:${String(tl % 60).padStart(2, '0')}`);
-  setText('net', `${fps} FPS · ping ${Math.round(rtt)} ms`);
+  setText('net', `${isAdmin ? 'ADMIN · ' : ''}${fps} FPS · ping ${Math.round(rtt)} ms`);
 
   const scopeOn = me.scoped && camera.fov < 45;
   setClass('scope', 'on', scopeOn);
   setStyle('crosshair', 'display', scopeOn || !me.alive ? 'none' : 'block');
 
   const b = me.body;
-  const spread = spreadFor(me.scoped, (t - me.scopeStart) / 1000, Math.hypot(b.vx, b.vz) > 1.2, !b.onGround, b.crouch);
+  const spread = cheats.aim ? 0 : spreadFor(me.scoped, (t - me.scopeStart) / 1000, Math.hypot(b.vx, b.vz) > 1.2, !b.onGround && !cheats.fly, b.crouch);
   const px = (Math.tan(spread) / Math.tan((camera.fov * Math.PI) / 360)) * (window.innerHeight / 2);
   const showSpread = me.alive && !scopeOn;
   const size = showSpread ? Math.max(8, Math.round(px * 2)) : 0;
@@ -1161,4 +1213,103 @@ function initLobby() {
   });
   $('reconnect').addEventListener('click', () => location.reload());
 }
+/* ================================================================ admin panel */
+
+// Lozinka se pamti samo dok je kartica otvorena (sessionStorage), da ostane na školskom računalu.
+function readAdminKey() {
+  try {
+    return sessionStorage.getItem('snajper-admin') || '';
+  } catch {
+    return '';
+  }
+}
+function writeAdminKey(key) {
+  try {
+    if (key) sessionStorage.setItem('snajper-admin', key);
+    else sessionStorage.removeItem('snajper-admin');
+  } catch {
+    /* nije bitno */
+  }
+}
+
+function onAdminState(m) {
+  if (!m.ok) {
+    isAdmin = false;
+    writeAdminKey('');
+    $('adminBox').hidden = false;
+    $('adminMsg').textContent = m.msg || 'Prijava nije uspjela.';
+    return;
+  }
+  isAdmin = true;
+  const wallChanged = !!cheats.wall !== !!m.cheats.wall;
+  cheats = { ...m.cheats };
+  $('adminLogin').hidden = true;
+  $('adminPanel').hidden = false;
+  $('adminMsg').textContent = '';
+  for (const box of document.querySelectorAll('[data-cheat]')) box.checked = !!cheats[box.dataset.cheat];
+  if (wallChanged) {
+    for (const r of roster.values()) if (r.av) setWallhack(r.av, !!cheats.wall);
+  }
+  if (cheats.ammo && me.reloading) { me.reloading = false; me.ammo = W.mag; }
+  renderAdminPlayers();
+}
+
+function renderAdminPlayers() {
+  if (!isAdmin) return;
+  const list = $('adminPlayers');
+  list.replaceChildren();
+  const botCount = [...roster.values()].filter((r) => r.bot).length;
+  if ([...$('adminBots').options].some((o) => Number(o.value) === botCount)) $('adminBots').value = String(botCount);
+  for (const r of roster.values()) {
+    const row = document.createElement('div');
+    row.className = 'admin-player';
+    row.append(span(`${r.name}${r.bot ? ' (bot)' : ''}${r.id === me.id ? ' (ti)' : ''}`));
+    if (r.id !== me.id) {
+      const kick = document.createElement('button');
+      kick.type = 'button';
+      kick.textContent = 'Izbaci';
+      kick.addEventListener('click', () => send({ t: 'admin', a: 'kick', id: r.id }));
+      row.append(kick);
+    }
+    list.append(row);
+  }
+}
+
+function initAdmin() {
+  $('adminLink').addEventListener('click', () => {
+    $('adminBox').hidden = !$('adminBox').hidden;
+    if (!$('adminBox').hidden && !isAdmin) $('adminKey').focus();
+  });
+  const login = () => {
+    const key = $('adminKey').value;
+    if (!key || !inGame) return;
+    $('adminMsg').textContent = 'Provjeravam…';
+    writeAdminKey(key);
+    $('adminKey').value = '';
+    send({ t: 'alogin', key });
+  };
+  $('adminGo').addEventListener('click', login);
+  $('adminKey').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') login();
+  });
+  for (const box of document.querySelectorAll('[data-cheat]')) {
+    box.addEventListener('change', () => send({ t: 'admin', a: 'cheat', name: box.dataset.cheat, on: box.checked }));
+  }
+  for (const btn of document.querySelectorAll('[data-act]')) {
+    btn.addEventListener('click', () => send({ t: 'admin', a: btn.dataset.act }));
+  }
+  $('adminBots').addEventListener('change', () => send({ t: 'admin', a: 'bots', n: Number($('adminBots').value) }));
+  const say = () => {
+    const text = $('adminSay').value.trim();
+    if (!text) return;
+    send({ t: 'admin', a: 'say', text });
+    $('adminSay').value = '';
+  };
+  $('adminSayGo').addEventListener('click', say);
+  $('adminSay').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') say();
+  });
+}
+
 initLobby();
+initAdmin();

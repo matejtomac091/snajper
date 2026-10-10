@@ -24,13 +24,13 @@ export function createBody(x = 0, y = 0, z = 0) {
   return { x, y, z, vx: 0, vy: 0, vz: 0, onGround: false, crouch: false };
 }
 
-// input: { wx, wz (željeni smjer u svijetu), jump, crouch, scoped }
+// input: { wx, wz (željeni smjer u svijetu), jump, crouch, scoped, speedMul?, jumpMul? }
 export function stepBody(b, input, dt, boxes) {
   if (input.crouch) b.crouch = true;
   else if (b.crouch && !blocked(boxes, b.x, b.y, b.z, P.height)) b.crouch = false;
 
   const h = b.crouch ? P.crouchHeight : P.height;
-  const max = b.crouch ? P.crouchSpeed : input.scoped ? P.scopeSpeed : P.walk;
+  const max = (b.crouch ? P.crouchSpeed : input.scoped ? P.scopeSpeed : P.walk) * (input.speedMul || 1);
 
   let wx = input.wx || 0;
   let wz = input.wz || 0;
@@ -44,7 +44,7 @@ export function stepBody(b, input, dt, boxes) {
   if (dv <= maxDv) { b.vx += dvx; b.vz += dvz; }
   else { b.vx += (dvx / dv) * maxDv; b.vz += (dvz / dv) * maxDv; }
 
-  if (input.jump && b.onGround) { b.vy = P.jump; b.onGround = false; }
+  if (input.jump && b.onGround) { b.vy = P.jump * (input.jumpMul || 1); b.onGround = false; }
   b.vy = Math.max(b.vy - P.gravity * dt, -P.maxFall);
 
   // Podkoraci da brzi pad ili spor kompjuter (veliki dt) ne prođu kroz tanki krov.
