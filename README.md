@@ -57,6 +57,19 @@ Tab rezultati · Esc pauza
   u krugu od 3.5 m, osim ako ih štiti zid. Tebe ne ozljeđuje. Kad potrošiš metke, vraćaš se na pušku.
 - Kad umreš, niz kreće od nule. Metci pištolja koje već imaš ostaju do kraja runde.
 
+## Načini igre
+
+Način bira onaj tko prvi otvori sobu (izbornik, **Način igre**). Admin ga može promijeniti usred igre.
+
+- **Svi protiv svih**: svatko za sebe, pobjeđuje tko ima najviše ubojstava.
+- **Timski deathmatch**: Crveni protiv Plavih. Ubojstvo protivnika je bod za tim, prvi do 30 pobjeđuje.
+- **Zastava (CTF)**: zastave stoje kod tornjeva. Dodirni tuđu zastavu i odnesi je do svoje
+  (tvoja mora biti u bazi). Ako nosač pogine, zastava pada; suigrač je vraća dodirom, a sama se vrati
+  nakon 20 s. Prve 3 osvojene zastave pobjeđuju.
+
+U timskim načinima nema pucanja po suigračima (ni eksplozijom). Timovi se sami izjednačavaju, botovi
+ulaze u manji tim, a u pauzi se može **Promijeniti tim** ako to ne poremeti ravnotežu.
+
 ## Skinovi
 
 Skin se bira u izborniku prije ulaska, uz mali 3D pregled. Ima ih šest: Klasik, Vozač, Robot, Kaktus,
@@ -65,12 +78,18 @@ Banana i Ninja. Dio svakog skina poprimi boju igrača.
 Skinovi su samo izgled: svi imaju istu pogodnu zonu, pa nijedan nije lakše ni teže pogoditi.
 Botovi dobiju nasumičan skin.
 
-## Rezolucija
+## Grafika i rezolucija
 
-Igra kreće na **Niskoj** rezoluciji (pola ekrana) da radi i na slabim računalima.
-U Postavkama (u izborniku ili na Esc) može se birati od **Vrlo niske** do **Ultra** (dvostruka rezolucija,
-samo za jaka računala). Pored naziva piše stvarna rezolucija. Gore desno piše FPS: ispod 30 se teško cilja.
-Koristite Chrome ili Edge.
+Dvije odvojene postavke (u izborniku ili na Esc → Postavke):
+
+- **Kvaliteta grafike** (mapa, skinovi, oružje): **Niska** je zadana i izgleda kao prvotna igra, za školska
+  računala. **Visoka** dodaje teksture betona, kontejnera i trave, sjene, nebo s oblacima i detaljne
+  modele puške i pištolja. **Ultra** dodaje oštrije teksture i sjene te travu po tlu. U izborniku se primijeni
+  odmah, a u igri gumbom **Primijeni grafiku** (kratko ponovno spajanje u istu sobu).
+- **Rezolucija**: od **Vrlo niske** do **Ultra** (dvostruka). Kreće na Niskoj (pola ekrana).
+  Pored naziva piše stvarna rezolucija.
+
+Gore desno piše FPS: ispod 30 se teško cilja, pa spusti rezoluciju ili grafiku. Koristite Chrome ili Edge.
 
 Krv je zadano isključena (pogoci daju sive iskre). Uključuje se u Postavkama, stavka **Krv**.
 
@@ -90,6 +109,9 @@ Lozinka se pamti samo dok je kartica otvorena. Izbačeni igrač može ponovno u�
 ## Za razvoj
 
 `npm test` pokreće testove fizike i servera (pravi server, pravi klijenti: pogoci, ubojstva,
-respawn, varanje, punjenje, runde, botovi).
+respawn, varanje, punjenje, runde, botovi, pištolj, admin, načini igre). `TEST_PORT_BASE=3201 npm test`
+ako su zadani portovi zauzeti.
+
+Grafika je u `public/gfx.js`, a modeli oružja u `public/viewmodel.js`.
 
 Postavke igre su u `public/shared/config.js`, a mapa u `public/shared/map.js`.

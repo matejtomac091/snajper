@@ -6,6 +6,8 @@ import {
 } from './shared/config.js';
 import { buildMap, COLORS } from './shared/map.js';
 import { createBody, stepBody } from './shared/physics.js';
+import { GFX_LEVELS, createRenderer, buildEnvironment, makeCharacterMaterial } from './gfx.js';
+import { createViewmodels } from './viewmodel.js';
 import { rayWorld } from './shared/ray.js';
 
 const $ = (id) => document.getElementById(id);
@@ -38,14 +40,23 @@ function saveSettings() {
 
 /* ================================================================ renderer i scena */
 
+// Kvaliteta grafike (svijet, skinovi, oružje). Mijenja se samo ponovnim učitavanjem jer renderer
+// ne može naknadno uključiti antialiasing i sjene.
+let GFX = GFX_LEVELS.includes(settings.gfx) ? settings.gfx : 'low';
 let renderer;
 try {
-  renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', stencil: false });
+  renderer = createRenderer(GFX);
 } catch (err) {
-  $('lobbyError').textContent = 'Ovaj preglednik ne može crtati 3D (WebGL). Probaj Chrome i uključi hardversko ubrzanje.';
-  $('play').disabled = true;
-  throw err;
+  try {
+    GFX = 'low';
+    renderer = createRenderer(GFX);
+  } catch {
+    $('lobbyError').textContent = 'Ovaj preglednik ne može crtati 3D (WebGL). Probaj Chrome i uključi hardversko ubrzanje.';
+    $('play').disabled = true;
+    throw err;
+  }
 }
+const SHADOWS = GFX !== 'low';
 const canvas = renderer.domElement;
 canvas.id = 'game';
 document.body.prepend(canvas);
@@ -60,75 +71,13 @@ function applyQuality() {
 }
 applyQuality();
 
-const SKY = new THREE.Color('#a9cbe8');
 const scene = new THREE.Scene();
-scene.background = SKY;
-scene.fog = new THREE.Fog(SKY, 110, 300);
 
 const camera = new THREE.PerspectiveCamera(BASE_FOV, window.innerWidth / window.innerHeight, 0.05, 450);
 camera.rotation.order = 'YXZ';
 
-scene.add(new THREE.HemisphereLight(0xffffff, 0x5d5648, 1.8));
-const sun = new THREE.DirectionalLight(0xfff1d6, 1.6);
-sun.position.set(40, 90, 25);
-scene.add(sun);
-
-function groundTexture() {
-  const c = document.createElement('canvas');
-  c.width = c.height = 64;
-  const g = c.getContext('2d');
-  g.fillStyle = '#8b9b69';
-  g.fillRect(0, 0, 64, 64);
-  g.fillStyle = '#83935f';
-  g.fillRect(0, 0, 32, 32);
-  g.fillRect(32, 32, 32, 32);
-  g.strokeStyle = 'rgba(0,0,0,0.07)';
-  g.strokeRect(0.5, 0.5, 63, 63);
-  const tex = new THREE.CanvasTexture(c);
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(150, 150);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.magFilter = THREE.NearestFilter;
-  return tex;
-}
-const ground = new THREE.Mesh(new THREE.PlaneGeometry(600, 600), new THREE.MeshLambertMaterial({ map: groundTexture() }));
-ground.rotation.x = -Math.PI / 2;
-scene.add(ground);
-
-// Cijela mapa je jedna mreža s bojama po vrhovima: jedan poziv za crtanje umjesto 140.
-function buildWorld() {
-  const FACES = [
-    { n: [1, 0, 0], c: [[1, 0, 1], [1, 0, 0], [1, 1, 0], [1, 1, 1]] },
-    { n: [-1, 0, 0], c: [[0, 0, 0], [0, 0, 1], [0, 1, 1], [0, 1, 0]] },
-    { n: [0, 1, 0], c: [[0, 1, 1], [1, 1, 1], [1, 1, 0], [0, 1, 0]] },
-    { n: [0, -1, 0], c: [[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]] },
-    { n: [0, 0, 1], c: [[0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]] },
-    { n: [0, 0, -1], c: [[1, 0, 0], [0, 0, 0], [0, 1, 0], [1, 1, 0]] },
-  ];
-  const pos = [], nor = [], col = [], idx = [];
-  const base = new THREE.Color();
-  MAP.boxes.forEach((b, i) => {
-    base.set(COLORS[b.c]);
-    const shade = 0.9 + (((i * 7919) % 100) / 100) * 0.16;
-    for (const f of FACES) {
-      const start = pos.length / 3;
-      for (const [sx, sy, sz] of f.c) {
-        pos.push(sx ? b.maxX : b.minX, sy ? b.maxY : b.minY, sz ? b.maxZ : b.minZ);
-        nor.push(f.n[0], f.n[1], f.n[2]);
-        const ao = !sy && b.minY === 0 ? 0.72 : 1; // tamniji dno uz tlo, glumi sjenu
-        col.push(base.r * shade * ao, base.g * shade * ao, base.b * shade * ao);
-      }
-      idx.push(start, start + 1, start + 2, start, start + 2, start + 3);
-    }
-  });
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
-  geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-  geo.setIndex(idx);
-  scene.add(new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true })));
-}
-buildWorld();
+// Nebo, svjetla, tlo i mapa. Niska kvaliteta izgleda točno kao prije; visoka i ultra imaju teksture i sjene.
+const env = buildEnvironment(scene, renderer, GFX, MAP, COLORS);
 
 /* ================================================================ likovi drugih igrača */
 
@@ -261,21 +210,22 @@ function makeAvatar(hue, name, skin = 'klasik', withTag = true, tagColor = '#fff
   const kit = {
     tint: new THREE.Color().setHSL(hue / 360, 0.6, 0.5),
     mat(color, basic = false) {
-      const m = basic ? new THREE.MeshBasicMaterial({ color }) : new THREE.MeshLambertMaterial({ color });
+      const m = makeCharacterMaterial(GFX, color, { emissive: basic });
       mats.push(m);
       return m;
     },
     add(parent, geo, material, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0) {
       geos.push(geo);
       const m = new THREE.Mesh(geo, material);
+      m.castShadow = SHADOWS;
       m.position.set(x, y, z);
       m.rotation.set(rx, ry, rz);
       parent.add(m);
       return m;
     },
     B: (w, h, d) => new THREE.BoxGeometry(w, h, d),
-    S: (r, ws = 10, hs = 8) => new THREE.SphereGeometry(r, ws, hs),
-    C: (rt, rb, h, seg = 10) => new THREE.CylinderGeometry(rt, rb, h, seg),
+    S: (r, ws = 10, hs = 8) => new THREE.SphereGeometry(r, SHADOWS ? ws * 2 : ws, SHADOWS ? hs * 2 : hs),
+    C: (rt, rb, h, seg = 10) => new THREE.CylinderGeometry(rt, rb, h, SHADOWS ? seg * 2 : seg),
   };
   const root = new THREE.Group();
   const legs = new THREE.Group();
@@ -364,72 +314,34 @@ const gunSun = new THREE.DirectionalLight(0xffffff, 1.5);
 gunSun.position.set(1, 2, 1);
 gunScene.add(gunSun);
 
-const vm = new THREE.Group();
-{
-  const metal = new THREE.MeshLambertMaterial({ color: '#2b2e33' });
-  const wood = new THREE.MeshLambertMaterial({ color: '#6b4a2b' });
-  const part = (geo, mat, x, y, z, rx = 0) => {
-    const m = new THREE.Mesh(geo, mat);
-    m.position.set(x, y, z);
-    m.rotation.x = rx;
-    vm.add(m);
-    return m;
-  };
-  part(new THREE.BoxGeometry(0.07, 0.12, 0.36), wood, 0, -0.03, 0.14);
-  part(new THREE.BoxGeometry(0.065, 0.08, 0.46), metal, 0, 0, -0.24);
-  part(new THREE.BoxGeometry(0.06, 0.05, 0.3), wood, 0, -0.05, -0.32);
-  part(new THREE.CylinderGeometry(0.014, 0.016, 0.72, 8), metal, 0, 0.01, -0.82, Math.PI / 2);
-  part(new THREE.CylinderGeometry(0.03, 0.03, 0.32, 12), metal, 0, 0.08, -0.22, Math.PI / 2);
-  part(new THREE.CylinderGeometry(0.036, 0.03, 0.06, 12), metal, 0, 0.08, -0.4, Math.PI / 2);
-  part(new THREE.BoxGeometry(0.02, 0.04, 0.03), metal, 0, 0.045, -0.14);
-  part(new THREE.BoxGeometry(0.02, 0.04, 0.03), metal, 0, 0.045, -0.3);
-  part(new THREE.BoxGeometry(0.07, 0.016, 0.016), metal, 0.05, 0.02, -0.06);
+// Puška i eksplozivni pištolj u ruci (viewmodel.js), detaljniji na visokoj i ultra kvaliteti.
+const VMS = createViewmodels(GFX);
+if (env.envMap) {
+  gunScene.environment = env.envMap;
+  gunScene.environmentIntensity = 0.8;
 }
-const muzzle = new THREE.Mesh(
-  new THREE.SphereGeometry(0.07, 8, 6),
-  new THREE.MeshBasicMaterial({ color: 0xffd27a, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }),
-);
-muzzle.position.set(0, 0.01, -1.22);
-muzzle.visible = false;
+
+function muzzleFlash(radius, color, at) {
+  const m = new THREE.Mesh(
+    new THREE.SphereGeometry(radius, 8, 6),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }),
+  );
+  m.position.copy(at);
+  m.position.z -= radius * 0.8;
+  m.visible = false;
+  return m;
+}
+
+const vm = VMS.rifle;
+const muzzle = muzzleFlash(0.07, 0xffd27a, VMS.muzzle.rifle);
 vm.add(muzzle);
 vm.scale.setScalar(0.75);
 gunScene.add(vm);
 
-// PRIVREMENI eksplozivni pištolj u ruci: nekoliko kutija (tamni metal, narančasta traka).
-// Gleda prema -Z, ishodište je otprilike kod okidača. Bljesak na ustima cijevi je u userData.flash.
-// Položaj u kadru postavlja updateViewmodel() (PISTOL_VM_POS), a vidljivost ovisi o me.weapon.
-function makePlaceholderPistol() {
-  const g = new THREE.Group();
-  const metal = new THREE.MeshLambertMaterial({ color: '#2a2d33' });
-  const dark = new THREE.MeshLambertMaterial({ color: '#17191d' });
-  const orange = new THREE.MeshLambertMaterial({ color: '#ff7a1a', emissive: '#6a2400' });
-  const part = (w, h, d, mat, x, y, z, rx = 0) => {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
-    m.position.set(x, y, z);
-    m.rotation.x = rx;
-    g.add(m);
-    return m;
-  };
-  part(0.05, 0.055, 0.26, metal, 0, 0.035, -0.1);        // navlaka
-  part(0.054, 0.014, 0.19, orange, 0, 0.042, -0.11);     // narančasta traka sa strane
-  part(0.034, 0.034, 0.022, orange, 0, 0.035, -0.236);   // narančasta usta cijevi
-  part(0.046, 0.035, 0.2, dark, 0, -0.01, -0.07);        // okvir
-  part(0.044, 0.13, 0.065, dark, 0, -0.085, 0.02, -0.25); // drška
-  part(0.012, 0.012, 0.06, dark, 0, -0.046, -0.06);      // štitnik okidača
-  part(0.03, 0.012, 0.012, metal, 0, 0.068, 0.02);       // stražnji nišan
-  part(0.01, 0.012, 0.01, metal, 0, 0.068, -0.215);      // prednji nišan
-  const flash = new THREE.Mesh(
-    new THREE.SphereGeometry(0.05, 8, 6),
-    new THREE.MeshBasicMaterial({ color: 0xffb060, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false }),
-  );
-  flash.position.set(0, 0.035, -0.28);
-  flash.visible = false;
-  g.add(flash);
-  g.userData.flash = flash;
-  return g;
-}
-const PISTOL_VM_POS = [0.14, -0.15, -0.45];
-const pistolVm = makePlaceholderPistol();
+const PISTOL_VM_POS = [0.16, -0.16, -0.4];
+const pistolVm = VMS.pistol;
+pistolVm.userData.flash = muzzleFlash(0.05, 0xffb060, VMS.muzzle.pistol);
+pistolVm.add(pistolVm.userData.flash);
 pistolVm.visible = false;
 gunScene.add(pistolVm);
 
@@ -1906,6 +1818,7 @@ function frame(t) {
       preview.r.render(preview.sc, preview.cam);
     }
   }
+  env.update(camera.position);
   renderer.clear();
   renderer.render(scene, camera);
   if (inGame && me.alive && !(me.scoped && camera.fov < 45)) {
@@ -2082,6 +1995,31 @@ function bindSettings() {
     sfx.setVolume(settings.volume);
     saveSettings();
   });
+  const gfx = $('gfx');
+  gfx.value = GFX;
+  gfx.addEventListener('change', () => {
+    settings.gfx = gfx.value;
+    saveSettings();
+    if (!inGame) {
+      rememberLobbyFields();
+      location.reload();
+      return;
+    }
+    $('gfxApply').hidden = settings.gfx === GFX;
+  });
+  $('gfxApply').addEventListener('click', () => {
+    // Ponovno učitaj stranicu i odmah uđi u istu sobu.
+    try {
+      sessionStorage.setItem('snajper-autojoin', '1');
+    } catch {
+      /* bez toga samo ostaneš u izborniku */
+    }
+    if (ws) {
+      ws.onclose = null;
+      ws.close();
+    }
+    location.reload();
+  });
   const blood = $('blood');
   blood.value = settings.blood ? '1' : '0';
   blood.addEventListener('change', () => {
@@ -2089,6 +2027,26 @@ function bindSettings() {
     if (!settings.blood) clearBlood();
     saveSettings();
   });
+}
+
+function rememberLobbyFields() {
+  const name = $('name').value.trim();
+  if (name) settings.name = name;
+  settings.room = $('room').value.trim() || settings.room;
+  settings.bots = Number($('bots').value) || 0;
+  settings.mode = $('mode').value;
+  settings.skin = $('skin').value;
+  saveSettings();
+}
+
+function takeAutojoin() {
+  try {
+    const on = sessionStorage.getItem('snajper-autojoin') === '1';
+    sessionStorage.removeItem('snajper-autojoin');
+    return on;
+  } catch {
+    return false;
+  }
 }
 
 function initLobby() {
@@ -2126,6 +2084,7 @@ function initLobby() {
     connect(name, room, bots, skin, gameMode);
   };
   $('play').addEventListener('click', start);
+  if (takeAutojoin() && $('name').value.trim()) start();
   for (const id of ['name', 'room']) {
     $(id).addEventListener('keydown', (e) => {
       if (e.key === 'Enter') start();
