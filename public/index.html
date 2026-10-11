@@ -48,11 +48,12 @@
           <li><b>Miš</b> ciljanje</li>
           <li><b>Lijevi klik</b> pucaj</li>
           <li><b>Desni klik</b> (drži) nišan</li>
-          <li><b>Kotačić</b> zum 4x / 8x</li>
+          <li><b>Kotačić</b> zum (s nišanom) / oružje</li>
           <li><b>Space</b> skok</li>
           <li><b>Shift</b> ili <b>C</b> čučanj</li>
           <li><b>R</b> punjenje</li>
-          <li><b>G</b> banana (niz od 3)</li>
+          <li><b>1</b> puška</li>
+          <li><b>2</b> ili <b>Q</b> pištolj (niz od 3)</li>
           <li><b>Tab</b> rezultati</li>
           <li><b>Esc</b> pauza</li>
         </ul>
@@ -73,6 +74,12 @@
       </select>
     </label>
     <label>Glasnoća<input id="volume" type="range" min="0" max="1" step="0.05"></label>
+    <label>Krv
+      <select id="blood">
+        <option value="0">Isključeno</option>
+        <option value="1">Uključeno</option>
+      </select>
+    </label>
   </div>
 
   <div id="hud" hidden>
@@ -93,7 +100,7 @@
     <div id="bottom">
       <div id="hpbox"><div id="hpbar"><div id="hpfill"></div></div><span id="hp">100</span></div>
       <div class="right-hud">
-        <div id="bananaHud" hidden>🍌 <span id="bananaCount">1</span> <small>[G]</small></div>
+        <div id="pistolHud">💥 <span id="pistolCount">8</span> <small>[2]</small></div>
         <div id="ammo">5 / 5</div>
       </div>
     </div>
@@ -120,7 +127,7 @@
         <li><b>Kotačić</b> zum</li>
         <li><b>Shift/C</b> čučanj</li>
         <li><b>R</b> punjenje</li>
-        <li><b>G</b> banana</li>
+        <li><b>2 / Q</b> pištolj</li>
         <li><b>Tab</b> rezultati</li>
       </ul>
       <button id="leave" class="ghost" type="button">Izađi u izbornik</button>
@@ -141,7 +148,7 @@
             <label class="check"><input type="checkbox" data-cheat="speed"> Brzina i skok</label>
             <label class="check"><input type="checkbox" data-cheat="fly"> Letenje kroz zidove</label>
             <label class="check"><input type="checkbox" data-cheat="wall"> Vidi kroz zidove</label>
-            <label class="check"><input type="checkbox" data-cheat="banana"> Beskonačne banane</label>
+            <label class="check"><input type="checkbox" data-cheat="pistol"> Beskonačni eksplozivni pištolj</label>
           </div>
           <p class="hint">Letenje: Space gore, Shift dolje.</p>
           <div class="admin-title">Soba</div>

@@ -5,6 +5,7 @@ import {
 } from './shared/config.js';
 import { buildMap, COLORS } from './shared/map.js';
 import { createBody, stepBody } from './shared/physics.js';
+import { rayWorld } from './shared/ray.js';
 
 const $ = (id) => document.getElementById(id);
 const MAP = buildMap();
@@ -17,7 +18,8 @@ const angDiff = (a, b) => wrap(b - a);
 
 /* ================================================================ postavke */
 
-const DEFAULTS = { name: '', room: 'razred', bots: 0, sens: 1, quality: 0.5, volume: 0.7, skin: 'klasik' };
+// blood: krv je isključena dok je netko ne uključi (školska igra). gfx: 'low' | 'high' | 'ultra'.
+const DEFAULTS = { name: '', room: 'razred', bots: 0, sens: 1, quality: 0.5, volume: 0.7, skin: 'klasik', blood: false, gfx: 'low' };
 const settings = (() => {
   try {
     return { ...DEFAULTS, ...JSON.parse(localStorage.getItem('snajper') || '{}') };
@@ -391,6 +393,44 @@ vm.add(muzzle);
 vm.scale.setScalar(0.75);
 gunScene.add(vm);
 
+// PRIVREMENI eksplozivni pištolj u ruci: nekoliko kutija (tamni metal, narančasta traka).
+// Gleda prema -Z, ishodište je otprilike kod okidača. Bljesak na ustima cijevi je u userData.flash.
+// Položaj u kadru postavlja updateViewmodel() (PISTOL_VM_POS), a vidljivost ovisi o me.weapon.
+function makePlaceholderPistol() {
+  const g = new THREE.Group();
+  const metal = new THREE.MeshLambertMaterial({ color: '#2a2d33' });
+  const dark = new THREE.MeshLambertMaterial({ color: '#17191d' });
+  const orange = new THREE.MeshLambertMaterial({ color: '#ff7a1a', emissive: '#6a2400' });
+  const part = (w, h, d, mat, x, y, z, rx = 0) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    m.position.set(x, y, z);
+    m.rotation.x = rx;
+    g.add(m);
+    return m;
+  };
+  part(0.05, 0.055, 0.26, metal, 0, 0.035, -0.1);        // navlaka
+  part(0.054, 0.014, 0.19, orange, 0, 0.042, -0.11);     // narančasta traka sa strane
+  part(0.034, 0.034, 0.022, orange, 0, 0.035, -0.236);   // narančasta usta cijevi
+  part(0.046, 0.035, 0.2, dark, 0, -0.01, -0.07);        // okvir
+  part(0.044, 0.13, 0.065, dark, 0, -0.085, 0.02, -0.25); // drška
+  part(0.012, 0.012, 0.06, dark, 0, -0.046, -0.06);      // štitnik okidača
+  part(0.03, 0.012, 0.012, metal, 0, 0.068, 0.02);       // stražnji nišan
+  part(0.01, 0.012, 0.01, metal, 0, 0.068, -0.215);      // prednji nišan
+  const flash = new THREE.Mesh(
+    new THREE.SphereGeometry(0.05, 8, 6),
+    new THREE.MeshBasicMaterial({ color: 0xffb060, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false }),
+  );
+  flash.position.set(0, 0.035, -0.28);
+  flash.visible = false;
+  g.add(flash);
+  g.userData.flash = flash;
+  return g;
+}
+const PISTOL_VM_POS = [0.14, -0.15, -0.45];
+const pistolVm = makePlaceholderPistol();
+pistolVm.visible = false;
+gunScene.add(pistolVm);
+
 /* ================================================================ efekti: tragovi metaka i udarci */
 
 const tracers = [];
@@ -404,13 +444,14 @@ for (let i = 0; i < 24; i++) {
   scene.add(line);
   tracers.push(line);
 }
-function tracer(a, b, life) {
+function tracer(a, b, life, color = 0xfff0b0) {
   const line = tracers.find((t) => !t.visible) || tracers.reduce((m, t) => (t.userData.life < m.userData.life ? t : m));
   const arr = line.geometry.attributes.position.array;
   arr[0] = a[0]; arr[1] = a[1]; arr[2] = a[2];
   arr[3] = b[0]; arr[4] = b[1]; arr[5] = b[2];
   line.geometry.attributes.position.needsUpdate = true;
   line.userData.life = line.userData.max = life;
+  line.material.color.set(color);
   line.material.opacity = 1;
   line.visible = true;
 }
@@ -447,91 +488,266 @@ function updateFx(dt) {
     m.scale.setScalar(1 + (1 - k) * 2.5);
     m.material.opacity = k;
   }
+  updateParticles(dt);
+  updateDecals(dt);
 }
 
-/* ================================================================ banana: let i eksplozija */
+/* ================================================================ krv i iskre na pogocima */
 
-function makeBananaMesh() {
-  const g = new THREE.Group();
-  const yellow = new THREE.MeshLambertMaterial({ color: '#f2d23c' });
-  const brown = new THREE.MeshLambertMaterial({ color: '#5a3d17' });
-  const seg = new THREE.CylinderGeometry(0.06, 0.06, 0.16, 8);
-  for (let i = -1; i <= 1; i++) {
-    const m = new THREE.Mesh(seg, yellow);
-    m.position.set(i * 0.12, -Math.abs(i) * 0.05, 0);
-    m.rotation.z = Math.PI / 2 + i * 0.45;
-    g.add(m);
+// Koliko čestica po pogotku i najviše mrlja na tlu, prema postavci grafike (settings.gfx).
+// Sve je unaprijed napravljeno (jedan Points za sve čestice, gotove mrlje), pa se tijekom igre ništa ne stvara.
+const HIT_FX = { low: { burst: 8, decals: 6 }, high: { burst: 20, decals: 20 }, ultra: { burst: 32, decals: 40 } };
+const hitFx = () => HIT_FX[settings.gfx] || HIT_FX.low;
+const PARTICLE_MAX = 192;
+const DECAL_MAX = 40;
+const DECAL_LIFE = 8; // s
+const BLOOD_COLORS = ['#5c0606', '#7a0b0b', '#430303'].map((c) => new THREE.Color(c));
+const SPARK_COLORS = ['#ffffff', '#d4d4d4', '#a6a6a6'].map((c) => new THREE.Color(c));
+
+const prt = {
+  pos: new Float32Array(PARTICLE_MAX * 3),
+  col: new Float32Array(PARTICLE_MAX * 4),
+  vel: new Float32Array(PARTICLE_MAX * 3),
+  life: new Float32Array(PARTICLE_MAX),
+  max: new Float32Array(PARTICLE_MAX),
+  floor: new Float32Array(PARTICLE_MAX),
+  next: 0,
+};
+for (let i = 0; i < PARTICLE_MAX; i++) prt.pos[i * 3 + 1] = -1000;
+const prtGeo = new THREE.BufferGeometry();
+prtGeo.setAttribute('position', new THREE.BufferAttribute(prt.pos, 3).setUsage(THREE.DynamicDrawUsage));
+prtGeo.setAttribute('color', new THREE.BufferAttribute(prt.col, 4).setUsage(THREE.DynamicDrawUsage));
+const prtPoints = new THREE.Points(prtGeo, new THREE.PointsMaterial({
+  size: 0.07, map: radialTexture('rgba(255,255,255,1)', 'rgba(255,255,255,0)'),
+  vertexColors: true, transparent: true, depthWrite: false,
+}));
+prtPoints.frustumCulled = false;
+prtPoints.visible = false;
+scene.add(prtPoints);
+
+// n čestica iz točke (x,y,z), uglavnom u smjeru (dx,dy,dz). blood: tamnocrvene kapi, inače bijelo-sive iskre.
+// floor: visina plohe ispod, tamo čestice nestaju.
+function spray(x, y, z, dx, dy, dz, n, blood, floor) {
+  const colors = blood ? BLOOD_COLORS : SPARK_COLORS;
+  const speed = blood ? 2.4 : 4.5;
+  for (let k = 0; k < n; k++) {
+    const i = prt.next;
+    prt.next = (i + 1) % PARTICLE_MAX;
+    const j = i * 3;
+    const s = speed * (0.4 + Math.random() * 0.8);
+    prt.pos[j] = x;
+    prt.pos[j + 1] = y;
+    prt.pos[j + 2] = z;
+    prt.vel[j] = dx * s + (Math.random() - 0.5) * s;
+    prt.vel[j + 1] = dy * s + (Math.random() - 0.25) * s;
+    prt.vel[j + 2] = dz * s + (Math.random() - 0.5) * s;
+    prt.life[i] = prt.max[i] = blood ? 0.45 + Math.random() * 0.45 : 0.2 + Math.random() * 0.25;
+    prt.floor[i] = floor;
+    const c = colors[k % colors.length];
+    const q = i * 4;
+    prt.col[q] = c.r;
+    prt.col[q + 1] = c.g;
+    prt.col[q + 2] = c.b;
+    prt.col[q + 3] = 1;
   }
-  const tipGeo = new THREE.CylinderGeometry(0.02, 0.035, 0.06, 6);
-  for (const side of [-1, 1]) {
-    const tip = new THREE.Mesh(tipGeo, brown);
-    tip.position.set(side * 0.22, -0.08, 0);
-    tip.rotation.z = Math.PI / 2 + side * 0.9;
-    g.add(tip);
-  }
-  g.userData.dispose = () => { yellow.dispose(); brown.dispose(); seg.dispose(); tipGeo.dispose(); };
-  return g;
+  prtPoints.visible = true;
 }
 
-const flyingBananas = new Map(); // id -> { mesh, tx, ty, tz }
-function syncFlyingBananas(list) {
-  const seen = new Set();
-  for (const [id, x, y, z] of list) {
-    seen.add(id);
-    let f = flyingBananas.get(id);
-    if (!f) {
-      f = { mesh: makeBananaMesh() };
-      f.mesh.position.set(x, y, z);
-      scene.add(f.mesh);
-      flyingBananas.set(id, f);
+function updateParticles(dt) {
+  if (!prtPoints.visible) return;
+  let alive = 0;
+  const fall = 9.8 * dt;
+  for (let i = 0; i < PARTICLE_MAX; i++) {
+    if (prt.life[i] <= 0) continue;
+    const j = i * 3;
+    prt.life[i] -= dt;
+    if (prt.life[i] <= 0 || prt.pos[j + 1] < prt.floor[i]) {
+      prt.life[i] = 0;
+      prt.pos[j + 1] = -1000;
+      prt.col[i * 4 + 3] = 0;
+      continue;
     }
-    f.tx = x; f.ty = y; f.tz = z;
+    alive++;
+    prt.vel[j + 1] -= fall;
+    prt.pos[j] += prt.vel[j] * dt;
+    prt.pos[j + 1] += prt.vel[j + 1] * dt;
+    prt.pos[j + 2] += prt.vel[j + 2] * dt;
+    prt.col[i * 4 + 3] = Math.min(1, (prt.life[i] / prt.max[i]) * 1.6);
   }
-  for (const [id, f] of flyingBananas) {
-    if (seen.has(id)) continue;
-    scene.remove(f.mesh);
-    f.mesh.userData.dispose();
-    flyingBananas.delete(id);
+  prtGeo.attributes.position.needsUpdate = true;
+  prtGeo.attributes.color.needsUpdate = true;
+  if (!alive) prtPoints.visible = false;
+}
+
+function splatTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d');
+  const blob = (x, y, r) => {
+    g.beginPath();
+    g.arc(x, y, r, 0, TAU);
+    g.fill();
+  };
+  g.fillStyle = '#5a0707';
+  blob(32, 32, 13);
+  for (let i = 0; i < 9; i++) {
+    const a = (i / 9) * TAU + Math.random() * 0.5;
+    const d = 7 + Math.random() * 9;
+    blob(32 + Math.cos(a) * d, 32 + Math.sin(a) * d, 4 + Math.random() * 5);
+  }
+  for (let i = 0; i < 12; i++) {
+    const a = Math.random() * TAU;
+    const d = 20 + Math.random() * 9;
+    blob(32 + Math.cos(a) * d, 32 + Math.sin(a) * d, 1 + Math.random() * 2);
+  }
+  g.fillStyle = 'rgba(40, 0, 0, 0.45)';
+  blob(31, 33, 8);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+const decalGeo = new THREE.PlaneGeometry(1, 1);
+decalGeo.rotateX(-Math.PI / 2);
+const decalTex = splatTexture();
+const decals = [];
+for (let i = 0; i < DECAL_MAX; i++) {
+  const m = new THREE.Mesh(decalGeo, new THREE.MeshBasicMaterial({
+    map: decalTex, transparent: true, depthWrite: false,
+    polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -4,
+  }));
+  m.visible = false;
+  m.renderOrder = 1;
+  m.userData.life = 0;
+  scene.add(m);
+  decals.push(m);
+}
+let decalNext = 0;
+
+// Mrlja na prvoj plohi ispod točke (x, top, z): tlo, krov ili sanduk. Nema je ako je ploha predaleko.
+function addDecal(x, top, z, size) {
+  const t = rayWorld(MAP.boxes, x, top, z, 0, -1, 0, 2.5);
+  if (t < 0.05 || t >= 2.5) return;
+  if (decalNext >= Math.min(DECAL_MAX, hitFx().decals)) decalNext = 0;
+  const m = decals[decalNext++];
+  m.position.set(x, top - t + 0.015, z);
+  m.rotation.y = Math.random() * TAU;
+  m.scale.set(size, 1, size);
+  m.userData.life = DECAL_LIFE;
+  m.material.opacity = 0.92;
+  m.visible = true;
+}
+
+function updateDecals(dt) {
+  for (let i = 0; i < DECAL_MAX; i++) {
+    const m = decals[i];
+    if (!m.visible) continue;
+    m.userData.life -= dt;
+    if (m.userData.life <= 0) m.visible = false;
+    else m.material.opacity = 0.92 * Math.min(1, m.userData.life / 2);
   }
 }
+
+// Kad se krv isključi, makni i ono što je već na ekranu.
+function clearBlood() {
+  for (let i = 0; i < DECAL_MAX; i++) decals[i].visible = false;
+  for (let i = 0; i < PARTICLE_MAX; i++) {
+    prt.life[i] = 0;
+    prt.pos[i * 3 + 1] = -1000;
+    prt.col[i * 4 + 3] = 0;
+  }
+  prtGeo.attributes.position.needsUpdate = true;
+  prtGeo.attributes.color.needsUpdate = true;
+  prtPoints.visible = false;
+}
+
+// Pogodak u igrača (poruka 'shot' s h): kapi krvi ili, bez krvi, sive iskre.
+function hitEffect(m) {
+  const blood = !!settings.blood;
+  puff(m.e, blood ? '#6e0a0a' : '#d8d8d8');
+  if (m.h === me.id) return; // vlastito tijelo: čestice bi prekrile ekran
+  const dx = m.e[0] - m.o[0], dy = m.e[1] - m.o[1], dz = m.e[2] - m.o[2];
+  const l = Math.hypot(dx, dy, dz) || 1;
+  const r = roster.get(m.h);
+  const floor = r && r.av ? r.av.root.position.y : 0;
+  spray(m.e[0], m.e[1], m.e[2], dx / l, dy / l, dz / l, hitFx().burst, blood, floor);
+}
+
+// Ubojstvo: veći prasak na liku žrtve i, s krvi, nekoliko mrlja na tlu ispod nje.
+function killEffect(m) {
+  const blood = !!settings.blood;
+  let x, y, z;
+  let dx = 0, dz = 0;
+  if (m.v === me.id) {
+    x = me.body.x; y = me.body.y; z = me.body.z;
+  } else {
+    const r = roster.get(m.v);
+    if (!r || !r.av || !r.av.root.visible) return;
+    const p = r.av.root.position;
+    x = p.x; y = p.y; z = p.z;
+    const killer = m.k === me.id ? me.body : roster.get(m.k)?.av?.root.position;
+    if (killer) {
+      dx = x - killer.x;
+      dz = z - killer.z;
+      const l = Math.hypot(dx, dz) || 1;
+      dx /= l;
+      dz /= l;
+    }
+    spray(x, y + (r.av.crouch ? 0.7 : 1.1), z, dx * 0.6, 0.3, dz * 0.6, hitFx().burst * 2, blood, y);
+  }
+  if (!blood) return;
+  addDecal(x + dx * 0.3, y + 0.6, z + dz * 0.3, 0.6 + Math.random() * 0.25);
+  for (let i = 0; i < 2; i++) {
+    addDecal(x + dx * 0.7 + (Math.random() - 0.5) * 1.2, y + 0.6, z + dz * 0.7 + (Math.random() - 0.5) * 1.2, 0.22 + Math.random() * 0.18);
+  }
+}
+
+/* ================================================================ eksplozivni pištolj: eksplozije */
 
 const flashes = [];
-for (let i = 0; i < 3; i++) {
+for (let i = 0; i < 6; i++) {
   const m = new THREE.Mesh(
     new THREE.SphereGeometry(1, 16, 12),
     new THREE.MeshBasicMaterial({ color: 0xffb02e, transparent: true, depthWrite: false, fog: false }),
   );
   m.visible = false;
-  m.userData = { life: 0 };
+  m.userData = { life: 0, r: PISTOL.radius };
   scene.add(m);
   flashes.push(m);
 }
-const chunkGeo = new THREE.BoxGeometry(0.16, 0.05, 0.32);
+const DEBRIS_COLORS = ['#5f6368', '#ff8a2a', '#3b3e43', '#ffb347'];
+const chunkGeo = new THREE.BoxGeometry(0.12, 0.07, 0.14);
 const chunks = [];
 for (let i = 0; i < 36; i++) {
-  const m = new THREE.Mesh(chunkGeo, new THREE.MeshLambertMaterial({ color: i % 3 ? '#f2d23c' : '#fff3c4', transparent: true }));
+  const m = new THREE.Mesh(chunkGeo, new THREE.MeshLambertMaterial({ color: DEBRIS_COLORS[i % DEBRIS_COLORS.length], transparent: true }));
   m.visible = false;
   m.userData = { life: 0, vx: 0, vy: 0, vz: 0 };
   scene.add(m);
   chunks.push(m);
 }
 
-function boom(x, y, z) {
+// r: radius eksplozije iz poruke 'boom'. Kugla vatre naraste točno do njega, pa se vidi dokle ubija.
+function boom(x, y, z, r) {
   const f = flashes.find((m) => !m.visible) || flashes[0];
   f.position.set(x, y, z);
   f.userData.life = 0.45;
+  f.userData.r = r;
   f.visible = true;
   let n = 0;
   for (const c of chunks) {
-    if (c.visible || n >= 12) continue;
+    if (c.visible || n >= 8) continue;
     n++;
-    const a = Math.random() * Math.PI * 2;
-    const sp = 6 + Math.random() * 7;
+    const a = Math.random() * TAU;
+    const sp = 3 + Math.random() * 5;
+    const u = c.userData;
     c.position.set(x, y, z);
-    c.userData = { life: 1.2, vx: Math.cos(a) * sp, vy: 4 + Math.random() * 7, vz: Math.sin(a) * sp };
+    u.life = 0.9;
+    u.vx = Math.cos(a) * sp;
+    u.vy = 3 + Math.random() * 5;
+    u.vz = Math.sin(a) * sp;
     c.visible = true;
   }
-  const dist = camera.position.distanceTo(new THREE.Vector3(x, y, z));
+  const dist = Math.hypot(x - camera.position.x, y - camera.position.y, z - camera.position.z);
   sfx.boom(Math.min(1, 30 / (dist + 12)));
   if (dist < 25) {
     shakeUntil = performance.now() + 450;
@@ -539,21 +755,13 @@ function boom(x, y, z) {
   }
 }
 
-function updateBananaFx(dt) {
-  const k = Math.min(1, dt * 15);
-  for (const f of flyingBananas.values()) {
-    f.mesh.position.x += (f.tx - f.mesh.position.x) * k;
-    f.mesh.position.y += (f.ty - f.mesh.position.y) * k;
-    f.mesh.position.z += (f.tz - f.mesh.position.z) * k;
-    f.mesh.rotation.x += dt * 10;
-    f.mesh.rotation.y += dt * 6;
-  }
+function updateBoomFx(dt) {
   for (const f of flashes) {
     if (!f.visible) continue;
     f.userData.life -= dt;
     if (f.userData.life <= 0) { f.visible = false; continue; }
     const p = 1 - f.userData.life / 0.45;
-    f.scale.setScalar(0.5 + p * BANANA.radius);
+    f.scale.setScalar(0.4 + p * (f.userData.r - 0.4));
     f.material.opacity = 0.85 * (1 - p);
   }
   for (const c of chunks) {
@@ -667,25 +875,29 @@ const sfx = (() => {
       src.stop(t + 1.35);
       tone(60, 0.5, 0.9 * vol, 'sine');
     },
-    whoosh: () => {
-      if (!ctx) return;
+    // Pištolj: kraći i oštriji pucanj od puške (eksplozija ima svoj zvuk).
+    pistol: (vol = 1, pan = 0) => {
+      if (!ctx || vol < 0.01) return;
       const t = ctx.currentTime;
+      const dest = out(pan);
       const src = ctx.createBufferSource();
       src.buffer = noise;
       const bp = ctx.createBiquadFilter();
       bp.type = 'bandpass';
-      bp.frequency.setValueAtTime(600, t);
-      bp.frequency.exponentialRampToValueAtTime(2400, t + 0.25);
+      bp.frequency.setValueAtTime(2600, t);
+      bp.frequency.exponentialRampToValueAtTime(500, t + 0.15);
       const g = ctx.createGain();
-      g.gain.setValueAtTime(0.35, t);
-      g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+      g.gain.setValueAtTime(0.8 * vol, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
       src.connect(bp);
       bp.connect(g);
-      g.connect(master);
+      g.connect(dest);
       src.start(t);
-      src.stop(t + 0.32);
+      src.stop(t + 0.2);
     },
-    bolt: () => { tone(2400, 0.02, 0.12); tone(1800, 0.02, 0.12, 'square', 0.12); },
+    draw: () => { tone(420, 0.04, 0.1); tone(950, 0.03, 0.08, 'square', 0.07); },
+    reward: () => { tone(660, 0.1, 0.2, 'triangle'); tone(880, 0.1, 0.2, 'triangle', 0.1); tone(1320, 0.2, 0.22, 'triangle', 0.2); },
+    bolt:() => { tone(2400, 0.02, 0.12); tone(1800, 0.02, 0.12, 'square', 0.12); },
     reload: () => { tone(900, 0.03, 0.12); tone(700, 0.03, 0.12, 'square', 0.9); tone(1200, 0.03, 0.12, 'square', 1.9); },
   };
 })();
@@ -696,7 +908,9 @@ const me = {
   id: 0, body: createBody(), yaw: 0, pitch: 0, eye: P.eye,
   hp: MAX_HP, alive: false, ammo: W.mag, reloading: false, reloadEnd: 0, lastShot: -1e9,
   scoped: false, scopeStart: 0, zoom: 0, spawnSeq: 0, protectUntil: 0, deadAt: 0, killer: '',
-  bananas: 0, streak: 0,
+  streak: 0,
+  // weapon: 'rifle' | 'pistol'. Metke pištolja oduzimamo sami (kao server), a poruka 'pistol' ih ispravlja.
+  weapon: 'rifle', pistolAmmo: 0, pistolLastShot: -1e9, switchAt: -1e9,
 };
 const input = { keys: new Set(), rmb: false };
 const roster = new Map(); // id -> { id, name, hue, kills, deaths, bot, alive, snaps, av }
@@ -824,7 +1038,7 @@ function handle(m) {
       endInfo = null;
       $('end').hidden = true;
       for (const r of roster.values()) { r.kills = 0; r.deaths = 0; }
-      me.bananas = 0;
+      me.pistolAmmo = 0;
       me.streak = 0;
       centerMsg('NOVA RUNDA', 2000);
       break;
@@ -832,19 +1046,18 @@ function handle(m) {
       failLobby(m.msg);
       break;
     case 'admin': onAdminState(m); break;
-    case 'banana':
-      if (m.n > me.bananas) {
-        centerMsg('🍌 BANANA! Baci je tipkom G', 2500);
-        sfx.kill();
-      }
-      me.bananas = m.n;
-      break;
+    case 'pistol': me.pistolAmmo = m.n; break;
     case 'streak': {
+      if (m.id === me.id) {
+        centerMsg('💥 EKSPLOZIVNI PIŠTOLJ! Tipka 2', 2500);
+        sfx.reward();
+        break;
+      }
       const r = roster.get(m.id);
-      if (r && m.id !== me.id) feedSystem(`${r.name} ima niz od ${m.n} i bananu!`);
+      if (r) feedSystem(`${r.name} ima niz od ${m.n} i eksplozivni pištolj!`);
       break;
     }
-    case 'boom': boom(m.x, m.y, m.z); break;
+    case 'boom': boom(m.x, m.y, m.z, m.r || PISTOL.radius); break;
     case 'announce':
       centerMsg(m.text, 5000);
       feedSystem(`Admin: ${m.text}`);
@@ -893,6 +1106,8 @@ function onSpawn(m) {
   me.reloading = false;
   me.lastShot = -1e9;
   me.scoped = false;
+  me.weapon = 'rifle';
+  me.switchAt = performance.now();
   me.spawnSeq = m.q;
   me.protectUntil = performance.now() + m.prot * 1000;
   $('death').hidden = true;
@@ -917,7 +1132,6 @@ function onSnap(m) {
     }
   }
   timeLeft = m.tl;
-  syncFlyingBananas(m.b || []);
 }
 
 function gunTip() {
@@ -926,16 +1140,20 @@ function gunTip() {
   return [v.x, v.y, v.z];
 }
 
+// m.w === 'p': hitac eksplozivnog pištolja (eksplozija stiže posebno, kao 'boom').
 function onShot(m) {
   const own = m.id === me.id;
-  tracer(own ? gunTip() : m.o, m.e, own ? 0.2 : 0.35);
-  puff(m.e, m.h ? '#c0392b' : '#d8cdb5');
+  const pistol = m.w === 'p';
+  tracer(own ? gunTip() : m.o, m.e, own ? 0.2 : 0.35, pistol ? 0xffa050 : 0xfff0b0);
+  if (m.h) hitEffect(m);
+  else puff(m.e, '#d8cdb5');
   if (own) return;
   const dx = m.o[0] - camera.position.x;
   const dz = m.o[2] - camera.position.z;
   const dist = Math.hypot(dx, m.o[1] - camera.position.y, dz);
   const rel = angDiff(me.yaw, Math.atan2(-dx, -dz));
-  sfx.shot(Math.min(1, 25 / (dist + 10)), dist > 40, -Math.sin(rel));
+  if (pistol) sfx.pistol(Math.min(1, 20 / (dist + 10)), -Math.sin(rel));
+  else sfx.shot(Math.min(1, 25 / (dist + 10)), dist > 40, -Math.sin(rel));
 }
 
 function onHit(m) {
@@ -961,7 +1179,9 @@ function onKill(m) {
   const v = roster.get(m.v);
   if (k) k.kills = m.kk;
   if (v) v.deaths = m.vd;
-  feedKill(k, v, m.hs, m.w === 'banana');
+  killEffect(m); // prije svega ostalog: treba još vidljiv lik žrtve
+  const pistol = m.w === 'pistol';
+  feedKill(k, v, m.hs, pistol);
   if (m.v === me.id) {
     me.alive = false;
     me.hp = 0;
@@ -969,13 +1189,13 @@ function onKill(m) {
     me.streak = 0;
     me.deadAt = performance.now();
     let by = '';
-    if (k) by = m.w === 'banana' ? `Raznijela te banana od: ${k.name}` : `Srušio te ${k.name}${m.hs ? ' (headshot)' : ''}`;
+    if (k) by = pistol ? `Raznio te eksplozivni pištolj: ${k.name}` : `Srušio te ${k.name}${m.hs ? ' (headshot)' : ''}`;
     $('deathBy').textContent = by;
     $('death').hidden = false;
   }
   if (m.k === me.id) {
     me.streak++;
-    centerMsg(m.w === 'banana' ? 'BANANA!' : m.hs ? 'HEADSHOT!' : 'ELIMINACIJA', 1400);
+    centerMsg(pistol ? 'BUM!' : m.hs ? 'HEADSHOT!' : 'ELIMINACIJA', 1400);
   }
   if (!$('board').hidden) renderBoard($('board'), 'Rezultati');
 }
@@ -1019,9 +1239,9 @@ function playerColor(r) {
   return r ? `hsl(${r.hue} 70% 65%)` : '#fff';
 }
 
-function feedKill(k, v, hs, banana) {
+function feedKill(k, v, hs, pistol) {
   const row = feedRow(k?.id === me.id || v?.id === me.id ? 'mine' : '');
-  row.append(span(k ? k.name : '?', playerColor(k)), span(banana ? '  🍌  ' : '  ▸  '), span(v ? v.name : '?', playerColor(v)));
+  row.append(span(k ? k.name : '?', playerColor(k)), span(pistol ? '  💥  ' : '  ▸  '), span(v ? v.name : '?', playerColor(v)));
   if (hs) {
     const h = span('  HEADSHOT');
     h.className = 'hs';
@@ -1103,14 +1323,39 @@ function shoot() {
   sfx.shot(1);
 }
 
-function throwBanana() {
-  if (!me.alive || ended) return;
-  if (!cheats.banana && me.bananas <= 0) return;
-  send({ t: 'throw', d: aimDir(me.yaw, me.pitch).map(r4) });
-  if (!cheats.banana) me.bananas--;
+const hasPistol = () => me.pistolAmmo > 0 || !!cheats.pistol;
+
+// Eksplozivni pištolj: bez nišana, 0.3 s između metaka. Server provjerava sve isto i radi eksploziju.
+function shootPistol() {
+  const t = performance.now();
+  if (!me.alive || ended || !hasPistol()) return;
+  if (t - me.pistolLastShot < PISTOL.cooldown * 1000) return;
+  sendUpdate(t);
+  send({ t: 'shoot', d: aimDir(me.yaw, me.pitch).map(r4), w: 'pistol' });
+  if (!cheats.pistol) me.pistolAmmo = Math.max(0, me.pistolAmmo - 1);
+  me.pistolLastShot = t;
   me.protectUntil = 0;
-  vmKick = 0.6;
-  sfx.whoosh();
+  me.pitch = Math.min(1.5, me.pitch + 0.015);
+  vmKick = 1;
+  flashAt = t;
+  sfx.pistol(1);
+}
+
+// '1' puška, '2' pištolj (samo s metcima ili cheatom), Q i kotačić (bez nišana) mijenjaju.
+function selectWeapon(w, hint = true) {
+  if (w === me.weapon || !me.alive) return;
+  if (w === 'pistol' && !hasPistol()) {
+    if (hint) centerMsg('Pištolj dobiješ za 3 ubojstva zaredom', 1500);
+    return;
+  }
+  me.weapon = w;
+  me.scoped = false;
+  me.switchAt = performance.now();
+  sfx.draw();
+}
+
+function toggleWeapon(hint) {
+  selectWeapon(me.weapon === 'pistol' ? 'rifle' : 'pistol', hint);
 }
 
 function reload() {
@@ -1129,6 +1374,8 @@ function updateMe(t, dt) {
     me.reloading = false;
     me.ammo = W.mag;
   }
+  // Pištolj je prazan (ili je nova runda, ili je cheat ugašen): nakon zadnjeg bljeska natrag na pušku.
+  if (me.weapon === 'pistol' && !hasPistol() && t - me.pistolLastShot > 250) selectWeapon('rifle');
   if (me.alive) {
     const k = input.keys;
     let f = 0, r = 0;
@@ -1138,7 +1385,7 @@ function updateMe(t, dt) {
     }
     const sy = Math.sin(me.yaw), cy = Math.cos(me.yaw);
     const boltReady = t - me.lastShot >= cooldownMs();
-    const wantScope = locked && input.rmb && !me.reloading && boltReady && !ended;
+    const wantScope = locked && input.rmb && me.weapon === 'rifle' && !me.reloading && boltReady && !ended;
     if (wantScope && !me.scoped) {
       me.scoped = true;
       me.scopeStart = t;
@@ -1226,6 +1473,7 @@ function updateOthers(t) {
     setCrouch(av, !!(b.f & 1));
     av.glint.visible = !!(b.f & 2);
     setProtected(av, !!(b.f & 4));
+    setHoldsPistol(av, !!(b.f & 8));
   }
 }
 
@@ -1235,16 +1483,31 @@ function updateViewmodel(t, dt) {
   bobT += dt * speed * 1.8;
   const bob = b.onGround ? Math.min(1, speed / P.walk) : 0;
   vmKick = Math.max(0, vmKick - dt * 4);
+  const swayX = Math.sin(bobT) * 0.012 * bob;
+  const swayY = Math.abs(Math.cos(bobT)) * 0.012 * bob;
+  // Promjena oružja: novo oružje kratko se podigne odozdo (180 ms).
+  const raise = Math.min(1, (t - me.switchAt) / 180);
+  const low = (1 - raise) * (1 - raise);
+  const flash = t - flashAt < 55;
+  const pistolOut = me.weapon === 'pistol';
+  vm.visible = !pistolOut;
+  pistolVm.visible = pistolOut;
+  muzzle.visible = !pistolOut && flash;
+  pistolVm.userData.flash.visible = pistolOut && flash;
+  if (pistolOut) {
+    pistolVm.position.set(PISTOL_VM_POS[0] + swayX, PISTOL_VM_POS[1] + swayY - low * 0.25, PISTOL_VM_POS[2] + vmKick * 0.05);
+    pistolVm.rotation.set(vmKick * 0.3 - low * 0.9, 0, 0);
+    return;
+  }
   const reloadK = me.reloading ? Math.sin(Math.min(1, Math.max(0, (me.reloadEnd - t) / (W.reload * 1000))) * Math.PI) : 0;
   vm.position.set(
-    0.2 + Math.sin(bobT) * 0.012 * bob,
-    -0.2 + Math.abs(Math.cos(bobT)) * 0.012 * bob - reloadK * 0.15,
+    0.2 + swayX,
+    -0.2 + swayY - reloadK * 0.15 - low * 0.25,
     -0.5 + vmKick * 0.08,
   );
-  vm.rotation.set(vmKick * 0.12 - reloadK * 0.6, 0, reloadK * 0.4);
+  vm.rotation.set(vmKick * 0.12 - reloadK * 0.6 - low * 0.9, 0, reloadK * 0.4);
   const since = (t - me.lastShot) / 1000;
   if (since < W.cooldown && !me.reloading) vm.rotation.z += Math.sin((since / W.cooldown) * Math.PI) * 0.25;
-  muzzle.visible = t - flashAt < 55;
 }
 
 function sendUpdate(t) {
@@ -1252,7 +1515,7 @@ function sendUpdate(t) {
   const b = me.body;
   send({
     t: 'u', x: r3(b.x), y: r3(b.y), z: r3(b.z), yaw: r3(me.yaw), pitch: r3(me.pitch),
-    c: b.crouch ? 1 : 0, g: b.onGround ? 1 : 0, s: me.scoped ? 1 : 0, q: me.spawnSeq,
+    c: b.crouch ? 1 : 0, g: b.onGround ? 1 : 0, s: me.scoped ? 1 : 0, h: me.weapon === 'pistol' ? 1 : 0, q: me.spawnSeq,
   });
 }
 
@@ -1293,12 +1556,17 @@ function hud(t) {
   setText('hp', String(hp));
   setStyle('hpfill', 'width', `${hp}%`);
   setStyle('hpfill', 'background', hp > 50 ? 'var(--ok)' : hp > 25 ? 'var(--accent)' : 'var(--danger)');
-  setText('ammo', me.reloading ? 'PUNJENJE…' : cheats.ammo ? '∞' : `${me.ammo} / ${W.mag}`);
+  const pistolOut = me.weapon === 'pistol';
+  const pistolCount = cheats.pistol ? '∞' : String(me.pistolAmmo);
+  setText('ammo', pistolOut ? `💥 ${pistolCount}${cheats.pistol ? '' : ` / ${PISTOL.mag}`}`
+    : me.reloading ? 'PUNJENJE…' : cheats.ammo ? '∞' : `${me.ammo} / ${W.mag}`);
+  setClass('ammo', 'pistol', pistolOut);
   const mine = roster.get(me.id);
   setText('kd', mine ? `Ubojstva ${mine.kills} · Smrti ${mine.deaths}${me.streak > 0 ? ` · Niz ${me.streak}` : ''}` : '');
-  const bananaShown = me.alive && (me.bananas > 0 || !!cheats.banana);
-  $('bananaHud').hidden = !bananaShown;
-  if (bananaShown) setText('bananaCount', cheats.banana ? '∞' : String(me.bananas));
+  // Mali podsjetnik iznad metaka puške: imaš pištolj na tipki 2.
+  const pistolShown = me.alive && !pistolOut && hasPistol();
+  setClass('pistolHud', 'show', pistolShown);
+  if (pistolShown) setText('pistolCount', pistolCount);
   const tl = Math.max(0, timeLeft);
   setText('timer', ended ? 'KRAJ' : `${Math.floor(tl / 60)}:${String(tl % 60).padStart(2, '0')}`);
   setText('net', `${isAdmin ? 'ADMIN · ' : ''}${fps} FPS · ping ${Math.round(rtt)} ms`);
@@ -1308,7 +1576,10 @@ function hud(t) {
   setStyle('crosshair', 'display', scopeOn || !me.alive ? 'none' : 'block');
 
   const b = me.body;
-  const spread = cheats.aim ? 0 : spreadFor(me.scoped, (t - me.scopeStart) / 1000, Math.hypot(b.vx, b.vz) > 1.2, !b.onGround && !cheats.fly, b.crouch);
+  const moving = Math.hypot(b.vx, b.vz) > 1.2;
+  const spread = cheats.aim ? 0
+    : pistolOut ? pistolSpread(moving)
+      : spreadFor(me.scoped, (t - me.scopeStart) / 1000, moving, !b.onGround && !cheats.fly, b.crouch);
   const px = (Math.tan(spread) / Math.tan((camera.fov * Math.PI) / 360)) * (window.innerHeight / 2);
   const showSpread = me.alive && !scopeOn;
   const size = showSpread ? Math.max(8, Math.round(px * 2)) : 0;
@@ -1350,7 +1621,7 @@ function frame(t) {
     updateMe(t, dt);
     updateOthers(t);
     updateFx(dt);
-    updateBananaFx(dt);
+    updateBoomFx(dt);
     updateViewmodel(t, dt);
     net(t);
     hud(t);
@@ -1419,10 +1690,9 @@ document.addEventListener('mousemove', (e) => {
 
 document.addEventListener('mousedown', (e) => {
   if (!locked || !inGame) return;
-  if (e.button === 0) shoot();
-  if (e.button === 1) {
-    e.preventDefault();
-    throwBanana();
+  if (e.button === 0) {
+    if (me.weapon === 'pistol') shootPistol();
+    else shoot();
   }
   if (e.button === 2) input.rmb = true;
 });
@@ -1432,8 +1702,16 @@ document.addEventListener('mouseup', (e) => {
 document.addEventListener('contextmenu', (e) => {
   if (inGame) e.preventDefault();
 });
+// Kotačić: s nišanom mijenja zum, bez nišana oružje (touchpad šalje puno događaja, pa najviše svakih 250 ms).
+let wheelSwitchAt = -1e9;
 document.addEventListener('wheel', (e) => {
-  if (locked && me.scoped) me.zoom = e.deltaY > 0 ? 0 : 1;
+  if (!locked || !inGame) return;
+  if (me.scoped) {
+    me.zoom = e.deltaY > 0 ? 0 : 1;
+  } else if (e.deltaY !== 0 && e.timeStamp - wheelSwitchAt > 250) {
+    wheelSwitchAt = e.timeStamp;
+    toggleWeapon(false);
+  }
 }, { passive: true });
 
 document.addEventListener('keydown', (e) => {
@@ -1449,8 +1727,11 @@ document.addEventListener('keydown', (e) => {
   if (!locked) return;
   if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
   input.keys.add(e.code);
-  if (e.code === 'KeyR') reload();
-  if (e.code === 'KeyG') throwBanana();
+  if (e.repeat) return;
+  if (e.code === 'KeyR' && me.weapon === 'rifle') reload();
+  if (e.code === 'Digit1') selectWeapon('rifle');
+  if (e.code === 'Digit2') selectWeapon('pistol');
+  if (e.code === 'KeyQ') toggleWeapon(true);
 });
 document.addEventListener('keyup', (e) => {
   input.keys.delete(e.code);
@@ -1527,6 +1808,13 @@ function bindSettings() {
   volume.addEventListener('input', () => {
     settings.volume = Number(volume.value);
     sfx.setVolume(settings.volume);
+    saveSettings();
+  });
+  const blood = $('blood');
+  blood.value = settings.blood ? '1' : '0';
+  blood.addEventListener('change', () => {
+    settings.blood = blood.value === '1';
+    if (!settings.blood) clearBlood();
     saveSettings();
   });
 }

@@ -430,9 +430,17 @@ function hasPistol(p) {
 }
 
 function firePistol(room, p, dx, dy, dz) {
-  if (room.state !== 'play' || !p.alive || !hasPistol(p)) return;
+  if (room.state !== 'play' || !p.alive) return;
+  // Klijent sam oduzima metke pa mu kod odbijenog hica javimo pravo stanje, da se brojke ne raziđu.
+  if (!hasPistol(p)) {
+    send(p, { t: 'pistol', n: 0 });
+    return;
+  }
   const t = now();
-  if (t - p.pistolLastShot < PISTOL.cooldown * 1000 - PISTOL_SLACK) return;
+  if (t - p.pistolLastShot < PISTOL.cooldown * 1000 - PISTOL_SLACK) {
+    send(p, { t: 'pistol', n: p.pistolAmmo });
+    return;
+  }
   p.pistolLastShot = t;
   p.protectUntil = 0;
   if (!p.cheats.pistol) {

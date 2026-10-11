@@ -285,38 +285,91 @@ async function adminTests(port) {
   assert.equal(legs.kill, true);
   console.log('  pogodak u noge ubija iz jednog metka ✔');
 
-  // banana (preko admin cheata): pada 4 m od igrača i ubija ga
+  // Eksplozivni pištolj. Admin ima savršen nišan (test ne ovisi o sreći) i nema besmrtnost,
+  // da se vidi da ga vlastita eksplozija ne ozljeđuje. A stoji na (-40, -20.8), 0.9 m južno od zida z=-22.
+  const mid = M.welcome.id;
+  M.send({ t: 'admin', a: 'cheat', name: 'god', on: false });
+  M.send({ t: 'admin', a: 'cheat', name: 'aim', on: true });
+  M.send({ t: 'admin', a: 'cheat', name: 'pistol', on: true });
+  await M.wait('admin', (m) => m.ok && !m.cheats.god && m.cheats.aim && m.cheats.pistol);
   await A.wait('spawn', (m) => m.q === 2, 5000);
   await sleep(1700);
-  M.send({ t: 'admin', a: 'cheat', name: 'banana', on: true });
-  await M.wait('admin', (m) => m.ok && m.cheats.banana);
-  const up = [0, 0.25, -1];
-  const l = Math.hypot(...up);
-  M.send({ t: 'throw', d: up.map((v) => v / l) });
-  const boom = await A.wait('boom', () => true, 4000);
-  assert.ok(Math.abs(boom.z - A.me.z) < 6, `banana pala na z=${boom.z}`);
-  const bk = await A.wait('kill', (m) => m.w === 'banana', 2000);
-  assert.equal(bk.v, A.welcome.id);
-  console.log(`  banana eksplodira (${Math.abs(boom.z - A.me.z).toFixed(1)} m od mete) i ubija ✔`);
-  M.send({ t: 'admin', a: 'cheat', name: 'banana', on: false });
-  await M.wait('admin', (m) => m.ok && !m.cheats.banana);
+  for (const m of A.log) m._used = true;
+  for (const m of M.log) m._used = true;
+  M.send({ t: 'shoot', d: dirTo([M.me.x, 1.6, M.me.z], [A.me.x, 0, A.me.z + 2]), w: 'pistol' });
+  const ps = await A.wait('shot', (m) => m.id === mid);
+  assert.equal(ps.w, 'p');
+  assert.equal(ps.h, 0, 'metak je pao u tlo, nije izravno pogodio');
+  const boom = await A.wait('boom', (m) => m.by === mid);
+  assert.equal(boom.r, 3.5);
+  const off = Math.hypot(boom.x - A.me.x, boom.z - A.me.z);
+  assert.ok(off > 1.5 && off < 2.5, `eksplozija ${off.toFixed(2)} m od mete`);
+  const pk = await A.wait('kill', (m) => m.v === A.welcome.id, 2000);
+  assert.equal(pk.k, mid);
+  assert.equal(pk.w, 'pistol');
+  await M.wait('hit', (m) => m.part === 'blast' && m.kill);
+  console.log(`  pištolj: metak u tlo ${off.toFixed(1)} m od igrača ga raznese (radius ${boom.r} m) ✔`);
 
-  // treće ubojstvo zaredom daje bananu
+  // zid štiti: admin se teleportira na drugu stranu zida i puca u tlo tik uz zid
   await A.wait('spawn', (m) => m.q === 3, 5000);
   await sleep(1700);
-  M.send({ t: 'shoot', d: dirTo([M.me.x, 1.6, M.me.z], [A.me.x, 1.1, A.me.z]) });
-  const award = await M.wait('banana', (m) => m.n === 1, 3000);
-  assert.equal(award.n, 1);
-  await A.wait('streak', (m) => m.id === M.welcome.id && m.n === 3, 2000);
-  console.log('  niz od 3 ubojstva daje bananu ✔');
+  M.me = { ...M.me, z: -30 };
+  M.update();
+  let mark = A.log.length;
+  M.send({ t: 'shoot', d: dirTo([M.me.x, 1.6, M.me.z], [A.me.x, 0, -23]), w: 'pistol' });
+  const wb = await A.wait('boom', (m) => m.by === mid);
+  const reach = Math.hypot(wb.x - A.me.x, wb.y - 1.1, wb.z - A.me.z);
+  assert.ok(reach < 3.5, `eksplozija mora biti unutar radiusa (${reach.toFixed(2)} m)`);
+  await sleep(500);
+  assert.ok(!A.log.slice(mark).some((m) => m.t === 'kill' || m.t === 'dmg'), 'zid je trebao zaštititi igrača');
+  console.log(`  zid štiti od eksplozije (${reach.toFixed(1)} m, ali iza zida) ✔`);
 
-  for (const m of M.log) m._used = true; // stare eksplozije ne računamo
-  M.send({ t: 'throw', d: [0, 0.3, 0.95] });
-  await M.wait('banana', (m) => m.n === 0, 2000);
-  await M.wait('boom', () => true, 4000);
-  M.send({ t: 'throw', d: [0, 0.3, 0.95] });
-  await M.none('boom', () => true, 3000);
-  console.log('  banana se može baciti samo jednom ✔');
+  // treće ubojstvo zaredom (puškom) puni eksplozivni pištolj na 8 metaka
+  M.send({ t: 'admin', a: 'cheat', name: 'pistol', on: false });
+  await M.wait('admin', (m) => m.ok && !m.cheats.pistol);
+  M.me = { ...M.me, z: -10 };
+  M.update();
+  M.send({ t: 'shoot', d: dirTo([M.me.x, 1.6, M.me.z], [A.me.x, 1.1, A.me.z]) });
+  const award = await M.wait('pistol', (m) => m.n === 8, 3000);
+  assert.equal(award.n, 8);
+  await A.wait('streak', (m) => m.id === mid && m.n === 3, 2000);
+  console.log('  niz od 3 ubojstva daje eksplozivni pištolj s 8 metaka ✔');
+
+  // drži pištolj: drugi vide zastavicu 8, a nišan (2) se ne pali ni kad ga klijent traži
+  M.keepAlive({ s: 1, h: 1 });
+  await sleep(300);
+  const row = A.snap.p.find((p) => p[0] === mid);
+  assert.equal(row[6] & 8, 8, 'zastavica 8: drži pištolj');
+  assert.equal(row[6] & 2, 0, 'pištolj nema nišan');
+
+  // Hitac odmah za hicem se odbija (0.3 s) i server javi pravo stanje (7). Svaki hitac troši metak,
+  // deveti ne prolazi. Admin bez besmrtnosti puca sebi pod noge: vlastita eksplozija ga ne ozljeđuje.
+  for (const m of M.log) m._used = true;
+  mark = M.log.length;
+  const down = [0, -1, 0];
+  M.send({ t: 'shoot', d: down, w: 'pistol' });
+  M.send({ t: 'shoot', d: down, w: 'pistol' });
+  const resync = await M.wait('pistol', () => true, 2000);
+  assert.equal(resync.n, 7, 'drugi hitac unutar 0.3 s se odbija, prvi troši metak');
+  for (let i = 0; i < 7; i++) {
+    await sleep(350);
+    M.send({ t: 'shoot', d: down, w: 'pistol' });
+  }
+  await M.wait('pistol', (m) => m.n === 0, 2000);
+  await sleep(350);
+  M.send({ t: 'shoot', d: down, w: 'pistol' });
+  await sleep(400);
+  const after = M.log.slice(mark);
+  const pShots = after.filter((m) => m.t === 'shot' && m.id === mid).length;
+  const pBooms = after.filter((m) => m.t === 'boom' && m.by === mid).length;
+  assert.equal(pShots, 8, `8 metaka, a prošlo je ${pShots}`);
+  assert.equal(pBooms, 8);
+  assert.ok(!after.some((m) => m.t === 'dmg' || (m.t === 'kill' && m.v === mid)), 'vlastita eksplozija ne smije ozlijediti strijelca');
+  assert.equal(A.snap.p.find((p) => p[0] === mid)[6] & 8, 0, 'bez metaka opet drži pušku');
+  console.log('  pištolj: razmak 0.3 s, 8 metaka pa kraj, strijelac neozlijeđen ✔');
+  M.keepAlive({ s: 1 });
+  M.send({ t: 'admin', a: 'cheat', name: 'god', on: true });
+  await M.wait('admin', (m) => m.ok && m.cheats.god);
 
   M.send({ t: 'u', x: M.me.x, y: 30, z: M.me.z, yaw: 0, pitch: 0, c: 0, g: 0, s: 0, q: M.me.q });
   await M.none('corr', () => true, 300);
@@ -350,7 +403,8 @@ export async function run() {
   }
   assert.equal(s1.err(), '', `greške na serveru: ${s1.err()}`);
 
-  const s3 = await startServer(BASE + 2, { SPAWNS: '-64,-45;-64,-25', ADMIN_KEY: 'tajna-123' });
+  // A se pojavi 0.9 m južno od zida na z=-22 (test eksplozije iza zida), M 10.8 m južnije, s čistim pogledom.
+  const s3 = await startServer(BASE + 2, { SPAWNS: '-40,-20.8;-40,-10', ADMIN_KEY: 'tajna-123' });
   try {
     await adminTests(BASE + 2);
   } finally {

@@ -40,8 +40,9 @@ Najmanje kašnjenje, ali radi samo ako školska mreža dopušta da se računala 
 
 ## Kontrole
 
-WASD kretanje · miš ciljanje · lijevi klik pucaj · desni klik (drži) nišan · kotačić zum 4x/8x ·
-Space skok · Shift ili C čučanj · R punjenje · G (ili srednji klik) baca bananu · Tab rezultati · Esc pauza
+WASD kretanje · miš ciljanje · lijevi klik pucaj · desni klik (drži) nišan · kotačić zum 4x/8x (s nišanom),
+inače mijenja oružje · Space skok · Shift ili C čučanj · R punjenje · 1 puška · 2 ili Q eksplozivni pištolj ·
+Tab rezultati · Esc pauza
 
 ## Pravila
 
@@ -51,10 +52,10 @@ Space skok · Shift ili C čučanj · R punjenje · G (ili srednji klik) baca ba
 - Kad netko nišani, vidi mu se odsjaj na glavi.
 - 1.5 s nakon pojave te nitko ne može pogoditi (prekida se kad pucaš).
 - Runda traje 5 minuta. Pobjeđuje tko ima najviše ubojstava.
-- Za svaka 3 ubojstva zaredom (bez umiranja) dobiješ bananu bombu, najviše 3 odjednom. Baciš je tipkom G.
-  Eksplodira kad udari u nešto ili nakon 2.5 s i ubija sve u krugu od 6 m, osim ako ih štiti zid.
-  Tebe ne ozljeđuje.
-- Kad umreš, niz kreće od nule. Banane koje već imaš ostaju do kraja runde.
+- Za svaka 3 ubojstva zaredom (bez umiranja) dobiješ eksplozivni pištolj s 8 metaka (tipka 2 ili Q).
+  Nema nišana, puca svakih 0.3 s. Izravan pogodak ubija, a metak eksplodira gdje udari i ubija sve
+  u krugu od 3.5 m, osim ako ih štiti zid. Tebe ne ozljeđuje. Kad potrošiš metke, vraćaš se na pušku.
+- Kad umreš, niz kreće od nule. Metci pištolja koje već imaš ostaju do kraja runde.
 
 ## Skinovi
 
@@ -71,6 +72,8 @@ U Postavkama (u izborniku ili na Esc) može se birati od **Vrlo niske** do **Ult
 samo za jaka računala). Pored naziva piše stvarna rezolucija. Gore desno piše FPS: ispod 30 se teško cilja.
 Koristite Chrome ili Edge.
 
+Krv je zadano isključena (pogoci daju sive iskre). Uključuje se u Postavkama, stavka **Krv**.
+
 ## Admin panel
 
 1. Na Renderu: **snajper → Environment → Add Environment Variable**,
@@ -78,7 +81,7 @@ Koristite Chrome ili Edge.
    Lozinka se ne smije pisati u kod jer je repozitorij javan.
 2. U igri pritisni **Esc** i na dnu klikni mali tekst **admin**, upiši lozinku.
 
-Cheatovi (vrijede samo za tebe): besmrtnost, beskonačni meci, beskonačne banane, brza paljba, savršen nišan,
+Cheatovi (vrijede samo za tebe): besmrtnost, beskonačni meci, beskonačni eksplozivni pištolj, brza paljba, savršen nišan,
 brzina i skok, letenje kroz zidove (Space gore, Shift dolje), vidi kroz zidove.
 Soba: nova runda, završi rundu, broj botova, poruka svima, izbaci igrača.
 
