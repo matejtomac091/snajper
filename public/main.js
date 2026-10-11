@@ -1,6 +1,8 @@
 // Snajper — klijent u pregledniku. Crta svijet (Three.js), čita miš i tipkovnicu, šalje položaj serveru.
 import * as THREE from 'three';
-import { P, W, MAX_HP, INTERP_DELAY, RESPAWN_TIME, MATCH_TIME, SKINS, BANANA, spreadFor, eyeHeight, aimDir } from './shared/config.js';
+import {
+  P, W, MAX_HP, INTERP_DELAY, RESPAWN_TIME, MATCH_TIME, SKINS, PISTOL, spreadFor, pistolSpread, eyeHeight, aimDir,
+} from './shared/config.js';
 import { buildMap, COLORS } from './shared/map.js';
 import { createBody, stepBody } from './shared/physics.js';
 
@@ -282,7 +284,13 @@ function makeAvatar(hue, name, skin = 'klasik', withTag = true) {
   head.position.y = 0.76;
   const gunPivot = new THREE.Group();
   gunPivot.position.set(0.2, 0.5, -0.1);
-  kit.add(gunPivot, kit.B(0.07, 0.09, 1.1), kit.mat('#2a2d32'), 0, 0, -0.4);
+  const rifle = kit.add(gunPivot, kit.B(0.07, 0.09, 1.1), kit.mat('#2a2d32'), 0, 0, -0.4);
+  // Mali pištolj umjesto puške kad igrač drži eksplozivni pištolj (zastavica 8 u stanju sa servera).
+  const pistol = new THREE.Group();
+  kit.add(pistol, kit.B(0.07, 0.12, 0.26), kit.mat('#2a2d32'), 0, 0, -0.1);
+  kit.add(pistol, kit.B(0.075, 0.03, 0.18), kit.mat('#ff7a1a'), 0, 0.03, -0.1);
+  pistol.visible = false;
+  gunPivot.add(pistol);
   (SKIN_BUILDERS[skin] || SKIN_BUILDERS.klasik)(legs, torso, head, kit);
   const glint = new THREE.Sprite(GLINT);
   glint.scale.setScalar(0.9);
@@ -296,7 +304,14 @@ function makeAvatar(hue, name, skin = 'klasik', withTag = true) {
     tag.position.y = 2.15;
     root.add(tag);
   }
-  return { root, legs, upper, head, gunPivot, glint, tag, mats, geos, crouch: false, prot: false };
+  return { root, legs, upper, head, gunPivot, rifle, pistol, glint, tag, mats, geos, crouch: false, prot: false, holdsPistol: false };
+}
+
+function setHoldsPistol(av, on) {
+  if (av.holdsPistol === on) return;
+  av.holdsPistol = on;
+  av.rifle.visible = !on;
+  av.pistol.visible = on;
 }
 
 function setCrouch(av, c) {

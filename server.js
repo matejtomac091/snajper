@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
 import {
   TICK_RATE, INTERP_DELAY, MAX_HP, RESPAWN_TIME, SPAWN_PROTECT, MATCH_TIME, END_TIME,
-  MAX_PLAYERS, MAX_BOTS, P, W, SKINS, BANANA, spreadFor, eyeHeight, aimDir,
+  MAX_PLAYERS, MAX_BOTS, P, W, SKINS, PISTOL, spreadFor, pistolSpread, eyeHeight, aimDir,
 } from './public/shared/config.js';
 import { buildMap } from './public/shared/map.js';
 import { createBody, stepBody, blocked } from './public/shared/physics.js';
@@ -23,8 +23,9 @@ const MATCH_SECONDS = Number(process.env.MATCH_TIME) || MATCH_TIME;
 const END_SECONDS = Number(process.env.END_TIME) || END_TIME;
 // Lozinka za admin panel. Postavlja se na Renderu (Environment → ADMIN_KEY), nikad u kodu jer je repozitorij javan.
 const ADMIN_KEY = String(process.env.ADMIN_KEY || '');
-const CHEATS = ['god', 'ammo', 'rapid', 'aim', 'speed', 'fly', 'wall', 'banana'];
+const CHEATS = ['god', 'ammo', 'rapid', 'aim', 'speed', 'fly', 'wall', 'pistol'];
 const RAPID_COOLDOWN = 150; // ms
+const PISTOL_SLACK = 100;   // ms tolerancije na razmak između metaka pištolja (mreža zna zgusnuti poruke)
 
 const MAP = buildMap();
 const BOXES = MAP.boxes;
@@ -126,8 +127,6 @@ class Room {
     this.state = 'play';
     this.timeLeft = MATCH_SECONDS;
     this.endAt = 0;
-    this.projectiles = [];
-    this.nextProjectile = 1;
   }
 
   humans() {
@@ -187,7 +186,8 @@ function makePlayer(room, name, ws, bot, skin = 'klasik') {
     ammo: W.mag, reloadUntil: 0, lastShot: -1e9,
     spawnSeq: 0, lastMove: t, budget: 0, hist: [], rtt: 80, strikes: 0,
     admin: false, adminTries: 0, cheats: {},
-    skin: SKINS.includes(skin) ? skin : 'klasik', streak: 0, bananas: 0,
+    skin: SKINS.includes(skin) ? skin : 'klasik', streak: 0,
+    pistolAmmo: 0, pistolLastShot: -1e9, holding: 'rifle',
     body: null,
     ai: bot ? {
       target: null, readyAt: 0, nextScan: 0, nextShotGap: 0, goal: null, goalUntil: 0,
@@ -224,7 +224,7 @@ function spawn(room, p) {
   const t = now();
   Object.assign(p, {
     x: s.x, y: 0, z: s.z, yaw: Math.atan2(s.x, s.z), pitch: 0,
-    crouch: false, ground: true, scoped: false,
+    crouch: false, ground: true, scoped: false, holding: 'rifle',
     hp: MAX_HP, alive: true, ammo: W.mag, reloadUntil: 0, lastShot: -1e9,
     protectUntil: t + SPAWN_PROTECT * 1000, lastMove: t, budget: 2,
   });
@@ -310,7 +310,9 @@ function onUpdate(p, m) {
   p.pitch = clamp(pitch, -1.55, 1.55);
   p.crouch = crouch;
   p.ground = !!m.g;
-  const scoped = !!m.s;
+  // Pištolj u ruci vide i drugi. Bez metaka (i bez cheata) igrač drži pušku, što god klijent tvrdio.
+  p.holding = m.h && hasPistol(p) ? 'pistol' : 'rifle';
+  const scoped = !!m.s && p.holding === 'rifle'; // pištolj nema nišan
   if (scoped && !p.scoped) p.scopeStart = t;
   p.scoped = scoped;
   pushHist(p, t);
@@ -322,7 +324,8 @@ function onShoot(room, p, m) {
   if (!d.every(Number.isFinite)) return;
   const len = Math.hypot(d[0], d[1], d[2]);
   if (len < 0.5) return;
-  fire(room, p, d[0] / len, d[1] / len, d[2] / len, null);
+  if (m.w === 'pistol') firePistol(room, p, d[0] / len, d[1] / len, d[2] / len);
+  else fireRifle(room, p, d[0] / len, d[1] / len, d[2] / len, null);
 }
 
 function onReload(p) {
@@ -368,7 +371,42 @@ function jitter(dx, dy, dz, s) {
   return [nx / l, ny / l, nz / l];
 }
 
-function fire(room, p, dx, dy, dz, forcedSpread) {
+// Jedan hitac (puška ili pištolj): odstupanje, zraka iz oka i poruka 'shot' svima.
+// Druge igrače provjeravamo malo u prošlosti, tamo gdje ih je strijelac vidio na ekranu.
+// tag: oznaka oružja u poruci 'shot' ('p' = pištolj), za pušku je nema.
+function traceShot(room, p, dx, dy, dz, spread, range, t, tag) {
+  [dx, dy, dz] = jitter(dx, dy, dz, spread);
+  const ox = p.x;
+  const oy = p.y + eyeHeight(p.crouch);
+  const oz = p.z;
+  const wall = rayWorld(BOXES, ox, oy, oz, dx, dy, dz, range);
+  let dist = wall;
+  let target = null;
+  let part = null;
+  const rewindTo = p.bot ? t : t - Math.min(350, p.rtt / 2 + INTERP_DELAY + 25);
+  for (const o of room.players.values()) {
+    if (o === p || !o.alive || t < o.protectUntil) continue;
+    const q = posAt(o, rewindTo);
+    const h = rayHitbox(ox, oy, oz, dx, dy, dz, q.x, q.y, q.z, q.c);
+    if (h && h.t < dist) {
+      dist = h.t;
+      target = o;
+      part = h.part;
+    }
+  }
+  const msg = {
+    t: 'shot', id: p.id,
+    o: [r2(ox), r2(oy), r2(oz)],
+    e: [r2(ox + dx * dist), r2(oy + dy * dist), r2(oz + dz * dist)],
+    h: target ? target.id : 0,
+  };
+  if (tag) msg.w = tag;
+  room.broadcast(msg);
+  // hitSomething: metak je u nešto udario (zid, pod ili igrač), a nije samo odletio u nebo.
+  return { ox, oy, oz, dx, dy, dz, dist, target, part, rewindTo, hitSomething: !!target || wall < range };
+}
+
+function fireRifle(room, p, dx, dy, dz, forcedSpread) {
   if (room.state !== 'play' || !p.alive) return;
   const t = now();
   if (!canFire(p, t)) return;
@@ -378,141 +416,90 @@ function fire(room, p, dx, dy, dz, forcedSpread) {
     p.ammo--;
     if (p.ammo <= 0) p.reloadUntil = t + W.reload * 1000;
   }
-
   const spread = p.cheats.aim
     ? 0
     : forcedSpread ?? spreadFor(p.scoped, (t - p.scopeStart) / 1000, speedOf(p) > 1.2, !p.ground, p.crouch);
-  [dx, dy, dz] = jitter(dx, dy, dz, spread);
-
-  const ox = p.x;
-  const oy = p.y + eyeHeight(p.crouch);
-  const oz = p.z;
-  let best = rayWorld(BOXES, ox, oy, oz, dx, dy, dz, W.range);
-  let target = null;
-  let part = null;
-  const rewindTo = p.bot ? t : t - Math.min(350, p.rtt / 2 + INTERP_DELAY + 25);
-  for (const o of room.players.values()) {
-    if (o === p || !o.alive || t < o.protectUntil) continue;
-    const q = posAt(o, rewindTo);
-    const h = rayHitbox(ox, oy, oz, dx, dy, dz, q.x, q.y, q.z, q.c);
-    if (h && h.t < best) {
-      best = h.t;
-      target = o;
-      part = h.part;
-    }
-  }
-  room.broadcast({
-    t: 'shot', id: p.id,
-    o: [r2(ox), r2(oy), r2(oz)],
-    e: [r2(ox + dx * best), r2(oy + dy * best), r2(oz + dz * best)],
-    h: target ? target.id : 0,
-  });
-  if (target) damage(room, p, target, part, t);
+  const s = traceShot(room, p, dx, dy, dz, spread, W.range, t, null);
+  if (s.target) damage(room, p, s.target, s.part, W.damage[s.part], t, null);
 }
 
-function damage(room, from, to, part, t) {
+/* ------------------------------------------------------------------ eksplozivni pištolj */
+
+function hasPistol(p) {
+  return p.pistolAmmo > 0 || !!p.cheats.pistol;
+}
+
+function firePistol(room, p, dx, dy, dz) {
+  if (room.state !== 'play' || !p.alive || !hasPistol(p)) return;
+  const t = now();
+  if (t - p.pistolLastShot < PISTOL.cooldown * 1000 - PISTOL_SLACK) return;
+  p.pistolLastShot = t;
+  p.protectUntil = 0;
+  if (!p.cheats.pistol) {
+    p.pistolAmmo--;
+    if (p.pistolAmmo <= 0) {
+      p.pistolAmmo = 0;
+      send(p, { t: 'pistol', n: 0 });
+    }
+  }
+  const spread = p.cheats.aim ? 0 : pistolSpread(speedOf(p) > 1.2);
+  const s = traceShot(room, p, dx, dy, dz, spread, PISTOL.range, t, 'p');
+  if (s.target) damage(room, p, s.target, s.part, MAX_HP, t, 'pistol'); // izravan pogodak uvijek ubija
+  if (!s.hitSomething) return;
+  // Eksplozija malo ispred mjesta udarca, na strani strijelca, da je ne zakloni baš zid u koji je metak udario.
+  const back = Math.min(0.15, s.dist);
+  const k = s.dist - back;
+  explode(room, p, s.ox + s.dx * k, s.oy + s.dy * k, s.oz + s.dz * k, t, s.rewindTo);
+}
+
+// Ubija sve unutar PISTOL.radius do čijih prsa vodi slobodan put (zid štiti). Strijelca nikad ne ozljeđuje.
+function explode(room, p, x, y, z, t, rewindTo) {
+  room.broadcast({ t: 'boom', x: r2(x), y: r2(y), z: r2(z), by: p.id, r: PISTOL.radius });
+  for (const o of room.players.values()) {
+    if (o === p || !o.alive || t < o.protectUntil || o.cheats.god) continue;
+    const q = posAt(o, rewindTo);
+    const tx = q.x - x, ty = q.y + (q.c ? 0.7 : 1.1) - y, tz = q.z - z;
+    const dist = Math.hypot(tx, ty, tz);
+    if (dist > PISTOL.radius) continue;
+    if (dist > 0.3 && rayWorld(BOXES, x, y, z, tx / dist, ty / dist, tz / dist, dist) < dist - 0.4) continue;
+    send(p, { t: 'hit', part: 'blast', kill: true });
+    send(o, { t: 'dmg', hp: 0, from: p.id, fx: r2(x), fz: r2(z) });
+    killPlayer(room, p, o, t, 'pistol', false);
+  }
+}
+
+/* ------------------------------------------------------------------ šteta i ubojstva */
+
+// weapon: null za pušku, 'pistol' za pištolj.
+function damage(room, from, to, part, amount, t, weapon) {
   if (to.cheats.god) {
     send(from, { t: 'hit', part, kill: false });
     return;
   }
-  to.hp -= W.damage[part];
+  to.hp -= amount;
   const kill = to.hp <= 0;
   send(from, { t: 'hit', part, kill });
   send(to, { t: 'dmg', hp: Math.max(0, to.hp), from: from.id, fx: r2(from.x), fz: r2(from.z) });
-  if (kill) killPlayer(room, from, to, part === 'head' ? 'head' : 'shot', t);
+  if (kill) killPlayer(room, from, to, t, weapon || (part === 'head' ? 'head' : 'shot'), part === 'head');
 }
 
-// how: 'shot', 'head' ili 'banana'
-function killPlayer(room, from, to, how, t) {
+// w u poruci 'kill': 'shot' ili 'head' (puška), 'pistol' (pištolj, izravno ili eksplozijom).
+function killPlayer(room, from, to, t, w, hs) {
   to.alive = false;
   to.hp = 0;
   to.scoped = false;
+  to.holding = 'rifle';
   to.deaths++;
   to.streak = 0;
   to.respawnAt = t + RESPAWN_TIME * 1000;
   from.kills++;
   from.streak++;
-  room.broadcast({ t: 'kill', k: from.id, v: to.id, hs: how === 'head', w: how, kk: from.kills, vd: to.deaths });
-  if (!from.bot && from.streak % BANANA.streak === 0 && from.bananas < BANANA.max) {
-    from.bananas++;
-    send(from, { t: 'banana', n: from.bananas });
+  room.broadcast({ t: 'kill', k: from.id, v: to.id, hs, w, kk: from.kills, vd: to.deaths });
+  if (!from.bot && from.streak % PISTOL.streak === 0) {
+    from.pistolAmmo = PISTOL.mag;
+    send(from, { t: 'pistol', n: from.pistolAmmo });
     room.broadcast({ t: 'streak', id: from.id, n: from.streak });
   }
-}
-
-/* ------------------------------------------------------------------ banana bomba */
-
-function inAnyBox(x, y, z) {
-  for (const b of BOXES) {
-    if (x > b.minX && x < b.maxX && y > b.minY && y < b.maxY && z > b.minZ && z < b.maxZ) return true;
-  }
-  return false;
-}
-
-function onThrow(room, p, m) {
-  if (room.state !== 'play' || !p.alive) return;
-  if (!p.cheats.banana && p.bananas <= 0) return;
-  if (!Array.isArray(m.d) || m.d.length !== 3) return;
-  const d = m.d.map(Number);
-  if (!d.every(Number.isFinite)) return;
-  const len = Math.hypot(d[0], d[1], d[2]);
-  if (len < 0.5) return;
-  if (!p.cheats.banana) {
-    p.bananas--;
-    send(p, { t: 'banana', n: p.bananas });
-  }
-  p.protectUntil = 0;
-  const [dx, dy, dz] = d.map((v) => v / len);
-  room.projectiles.push({
-    id: room.nextProjectile++, owner: p,
-    x: p.x + dx * 0.6, y: p.y + eyeHeight(p.crouch) - 0.1, z: p.z + dz * 0.6,
-    vx: dx * BANANA.speed, vy: dy * BANANA.speed + BANANA.up, vz: dz * BANANA.speed,
-    life: BANANA.fuse,
-  });
-}
-
-function explode(room, pr, x, y, z, t) {
-  room.broadcast({ t: 'boom', x: r2(x), y: r2(y), z: r2(z), by: pr.owner.id });
-  if (room.state !== 'play') return;
-  for (const o of room.players.values()) {
-    if (o === pr.owner || !o.alive || t < o.protectUntil || o.cheats.god) continue;
-    const tx = o.x - x, ty = o.y + 1.1 - y, tz = o.z - z;
-    const dist = Math.hypot(tx, ty, tz);
-    if (dist > BANANA.radius) continue;
-    // Zid štiti od eksplozije.
-    if (dist > 0.3 && rayWorld(BOXES, x, y, z, tx / dist, ty / dist, tz / dist, dist) < dist - 0.4) continue;
-    send(o, { t: 'dmg', hp: 0, from: pr.owner.id, fx: r2(x), fz: r2(z) });
-    killPlayer(room, pr.owner, o, 'banana', t);
-  }
-}
-
-function tickProjectiles(room, t, dt) {
-  const steps = 4;
-  const s = dt / steps;
-  room.projectiles = room.projectiles.filter((pr) => {
-    pr.life -= dt;
-    for (let i = 0; i < steps; i++) {
-      pr.vy -= BANANA.gravity * s;
-      const nx = pr.x + pr.vx * s, ny = pr.y + pr.vy * s, nz = pr.z + pr.vz * s;
-      let hit = ny <= 0.05 || inAnyBox(nx, ny, nz) || Math.abs(nx) > MAP.arena || Math.abs(nz) > MAP.arena;
-      if (!hit) {
-        for (const o of room.players.values()) {
-          if (o === pr.owner || !o.alive) continue;
-          if (Math.hypot(o.x - nx, o.y + 1.0 - ny, o.z - nz) < 0.6) { hit = true; break; }
-        }
-      }
-      if (hit) {
-        explode(room, pr, pr.x, Math.max(0.15, pr.y), pr.z, t);
-        return false;
-      }
-      pr.x = nx; pr.y = ny; pr.z = nz;
-    }
-    if (pr.life <= 0) {
-      explode(room, pr, pr.x, Math.max(0.15, pr.y), pr.z, t);
-      return false;
-    }
-    return true;
-  });
 }
 
 /* ------------------------------------------------------------------ botovi */
@@ -605,7 +592,7 @@ function botThink(room, b, t, dt) {
     const aimed = Math.abs(angDiff(b.yaw, yaw)) < 0.05;
     if (aimed && t >= ai.readyAt && t - b.lastShot > ai.nextShotGap) {
       const [dx, dy, dz] = aimDir(b.yaw, b.pitch);
-      fire(room, b, dx, dy, dz, 0.007 + Math.random() * 0.014);
+      fireRifle(room, b, dx, dy, dz, 0.007 + Math.random() * 0.014);
       ai.nextShotGap = W.cooldown * 1000 + 700 + Math.random() * 1500;
     }
   } else {
@@ -658,12 +645,12 @@ function endMatch(room, t) {
 function resetMatch(room, t) {
   room.state = 'play';
   room.timeLeft = MATCH_SECONDS;
-  room.projectiles = [];
   for (const p of room.players.values()) {
     p.kills = 0;
     p.deaths = 0;
     p.streak = 0;
-    p.bananas = 0;
+    p.pistolAmmo = 0;
+    p.holding = 'rifle';
     p.alive = false;
     p.respawnAt = t;
   }
@@ -679,7 +666,6 @@ function tickRoom(room, t) {
     resetMatch(room, t);
   }
   syncBots(room);
-  tickProjectiles(room, t, dt);
   for (const p of room.players.values()) {
     if (!p.alive) {
       if (room.state === 'play' && t >= p.respawnAt) spawn(room, p);
@@ -694,12 +680,12 @@ function tickRoom(room, t) {
   const list = [];
   for (const p of room.players.values()) {
     if (!p.alive) continue;
-    const f = (p.crouch ? 1 : 0) | (p.scoped ? 2 : 0) | (t < p.protectUntil ? 4 : 0);
+    // zastavice: 1 čuči, 2 nišani, 4 zaštićen, 8 drži pištolj
+    const f = (p.crouch ? 1 : 0) | (p.scoped ? 2 : 0) | (t < p.protectUntil ? 4 : 0)
+      | (p.holding === 'pistol' && hasPistol(p) ? 8 : 0);
     list.push([p.id, r2(p.x), r2(p.y), r2(p.z), r3(p.yaw), r3(p.pitch), f]);
   }
-  const msg = { t: 's', p: list, tl: Math.max(0, Math.ceil(room.timeLeft)) };
-  if (room.projectiles.length) msg.b = room.projectiles.map((pr) => [pr.id, r2(pr.x), r2(pr.y), r2(pr.z)]);
-  const s = JSON.stringify(msg);
+  const s = JSON.stringify({ t: 's', p: list, tl: Math.max(0, Math.ceil(room.timeLeft)) });
   for (const p of room.players.values()) {
     if (p.ws && p.ws.bufferedAmount < 262144) sendRaw(p, s); // sporim vezama preskačemo stanje umjesto da gomilamo
   }
@@ -848,7 +834,6 @@ wss.on('connection', (ws) => {
       case 'u': onUpdate(player, m); break;
       case 'shoot': onShoot(room, player, m); break;
       case 'reload': onReload(player); break;
-      case 'throw': onThrow(room, player, m); break;
       case 'ping':
         player.rtt = clamp(+m.rtt || 0, 0, 1000);
         send(player, { t: 'pong', ct: +m.ct || 0 });

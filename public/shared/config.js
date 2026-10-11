@@ -69,13 +69,10 @@ export function aimDir(yaw, pitch) {
 // Skinovi su samo izgled: svi imaju istu pogodnu zonu, pa nijedan nije lakše pogoditi.
 export const SKINS = ['klasik', 'vozac', 'robot', 'kaktus', 'banana', 'ninja'];
 
-// Banana bomba: dobiješ jednu za svaka 3 ubojstva zaredom (bez umiranja).
-export const BANANA = {
-  streak: 3,
-  max: 3,        // najviše banana odjednom
-  speed: 18,     // m/s
-  up: 3,         // dodatni uzlet pri bacanju
-  gravity: 20,
-  radius: 6,     // m, sve unutra (s vidljivim putem do eksplozije) umire
-  fuse: 2.5,     // s, eksplodira najkasnije nakon ovoliko
-};
+// Eksplozivni pištolj: za svaka 3 ubojstva zaredom (bez umiranja) napuni se na 8 metaka.
+// Nema nišana. Pogodak ubija, a metak eksplodira gdje udari: radius je u metrima.
+export const PISTOL = { streak: 3, mag: 8, cooldown: 0.3, range: 150, spreadHip: 0.018, spreadMove: 0.012, radius: 3.5 };
+
+export function pistolSpread(moving) {
+  return PISTOL.spreadHip + (moving ? PISTOL.spreadMove : 0);
+}

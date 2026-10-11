@@ -7,6 +7,8 @@ import { WebSocket } from 'ws';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Više agenata/strojeva može vrtjeti testove odjednom: TEST_PORT_BASE=3201 node test/run.js
+const BASE = Number(process.env.TEST_PORT_BASE) || 3101;
 
 function startServer(port, env = {}) {
   const proc = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: { ...process.env, PORT: String(port), ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -339,26 +341,26 @@ async function adminTests(port) {
 }
 
 export async function run() {
-  const s1 = await startServer(3101, { SPAWNS: '-64,-45;-64,-25', MATCH_TIME: '16', END_TIME: '3' });
+  const s1 = await startServer(BASE, { SPAWNS: '-64,-45;-64,-25', MATCH_TIME: '16', END_TIME: '3' });
   try {
-    await httpTests(3101);
-    await combatTests(3101);
+    await httpTests(BASE);
+    await combatTests(BASE);
   } finally {
     s1.proc.kill();
   }
   assert.equal(s1.err(), '', `greške na serveru: ${s1.err()}`);
 
-  const s3 = await startServer(3103, { SPAWNS: '-64,-45;-64,-25', ADMIN_KEY: 'tajna-123' });
+  const s3 = await startServer(BASE + 2, { SPAWNS: '-64,-45;-64,-25', ADMIN_KEY: 'tajna-123' });
   try {
-    await adminTests(3103);
+    await adminTests(BASE + 2);
   } finally {
     s3.proc.kill();
   }
   assert.equal(s3.err(), '', `greške na serveru: ${s3.err()}`);
 
-  const s2 = await startServer(3102);
+  const s2 = await startServer(BASE + 1);
   try {
-    await botTests(3102);
+    await botTests(BASE + 1);
   } finally {
     s2.proc.kill();
   }
