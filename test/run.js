@@ -1,5 +1,5 @@
 // Pokreće sve testove: npm test
-const suites = ['./physics.test.js', './server.test.js'];
+const suites = ['./physics.test.js', './server.test.js', './modes.test.js'];
 let failed = 0;
 for (const s of suites) {
   try {

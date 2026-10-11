@@ -104,6 +104,9 @@ const HALF_SPAWNS = [
   [64, -20], [-64, -5], [-35, -30], [10, -18], [-50, -45], [35, -60],
 ];
 
+// Postolje zastave (način Zastava): na tlu ispred crvenog tornja, 4 m od svega. Plavo je zrcalno.
+const FLAG_BASE = [-48, -48];
+
 export function buildMap() {
   const A = ARENA;
   const once = [];
@@ -133,5 +136,8 @@ export function buildMap() {
   const spawns = [];
   for (const [x, z] of HALF_SPAWNS) spawns.push([x, z], [-x, -z]);
 
-  return { boxes, spawns, arena: A };
+  // flags[0] je crvena (x+z<0), flags[1] plava
+  const flags = [[FLAG_BASE[0], FLAG_BASE[1]], [-FLAG_BASE[0], -FLAG_BASE[1]]];
+
+  return { boxes, spawns, arena: A, flags };
 }

@@ -1,0 +1,109 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>vm test</title>
+<script type="importmap">{ "imports": { "three": "/three/three.module.js", "three/addons/": "/three-addons/" } }</script>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: linear-gradient(#8fb8de 0%, #c9dcea 52%, #8a9384 53%, #5f6b5a 100%); }
+  canvas { display: block; }
+  #ch { position: fixed; left: 50%; top: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px; pointer-events: none; }
+  #ch::before, #ch::after { content: ''; position: absolute; background: #ff2020; }
+  #ch::before { left: 10px; top: 0; width: 2px; height: 22px; }
+  #ch::after { top: 10px; left: 0; height: 2px; width: 22px; }
+  #info { position: fixed; left: 6px; top: 6px; font: 12px monospace; background: #fffc; padding: 3px 6px; }
+</style>
+</head>
+<body>
+<div id="ch"></div>
+<div id="info"></div>
+<script type="module">
+import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { createViewmodels } from './viewmodel.js';
+
+const P = new URLSearchParams(location.search);
+const level = P.get('level') || 'high';
+const view = P.get('view') || 'fp';
+const obj = P.get('obj') || 'rifle';
+const yaw = THREE.MathUtils.degToRad(parseFloat(P.get('yaw') || '90'));
+const pitch = THREE.MathUtils.degToRad(parseFloat(P.get('pitch') || '0'));
+const zoom = parseFloat(P.get('zoom') || '1');
+const focus = P.get('focus') ? P.get('focus').split(',').map(Number) : null;
+
+const renderer = new THREE.WebGLRenderer({ antialias: P.get('aa') !== '0', alpha: true });
+renderer.setPixelRatio(1);
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 2.2));
+const sun = new THREE.DirectionalLight(0xffffff, 1.5);
+sun.position.set(1, 2, 1);
+scene.add(sun);
+if (level !== 'low') {
+  const pm = new THREE.PMREMGenerator(renderer);
+  scene.environment = pm.fromScene(new RoomEnvironment(), 0.04).texture;
+  pm.dispose();
+}
+
+const base = { ...renderer.info.memory };
+const t0 = performance.now();
+const vms = createViewmodels(level);
+const buildMs = performance.now() - t0;
+
+const tris = (g) => {
+  let n = 0;
+  g.traverse((o) => { if (o.isMesh) n += (o.geometry.index ? o.geometry.index.count : o.geometry.attributes.position.count) / 3; });
+  return n;
+};
+const meshes = (g) => { let n = 0; g.traverse((o) => { if (o.isMesh) n++; }); return n; };
+
+let camera;
+if (view === 'fp') {
+  camera = new THREE.PerspectiveCamera(65, innerWidth / innerHeight, 0.01, 10);
+  const num = (k, d) => (P.get(k) ? P.get(k).split(',').map(Number) : d);
+  vms.rifle.position.fromArray(num('rpos', [0.2, -0.2, -0.5]));
+  vms.rifle.scale.setScalar(num('rscale', [0.75])[0]);
+  vms.pistol.position.fromArray(num('ppos', [0.18, -0.17, -0.38]));
+  vms.pistol.scale.setScalar(num('pscale', [1])[0]);
+  vms.pistol.rotation.y = num('pyaw', [0])[0];
+  scene.add(obj === 'pistol' ? vms.pistol : vms.rifle);
+} else {
+  document.getElementById('ch').style.display = 'none';
+  const g = obj === 'pistol' ? vms.pistol : vms.rifle;
+  const pivot = new THREE.Group();
+  pivot.add(g);
+  scene.add(pivot);
+  const bb = new THREE.Box3().setFromObject(g);
+  const c = focus ? new THREE.Vector3(...focus) : bb.getCenter(new THREE.Vector3());
+  g.position.sub(c);
+  pivot.rotation.set(pitch, yaw, 0, 'XYZ');
+  const size = bb.getSize(new THREE.Vector3()).length();
+  camera = new THREE.PerspectiveCamera(30, innerWidth / innerHeight, 0.005, 20);
+  camera.position.set(0, 0, (size * 0.62) / Math.tan(THREE.MathUtils.degToRad(15)) / zoom * 0.55);
+  camera.lookAt(0, 0, 0);
+}
+
+renderer.render(scene, camera);
+const info = {
+  level,
+  tris: { rifle: tris(vms.rifle), pistol: tris(vms.pistol) },
+  meshes: { rifle: meshes(vms.rifle), pistol: meshes(vms.pistol) },
+  drawCalls: renderer.info.render.calls,
+  buildMs: Math.round(buildMs),
+  muzzle: { rifle: vms.muzzle.rifle.toArray(), pistol: vms.muzzle.pistol.toArray() },
+};
+document.getElementById('info').textContent = `${level} ${view} ${obj} | tris rifle ${info.tris.rifle} pistol ${info.tris.pistol} | meshes ${info.meshes.rifle}/${info.meshes.pistol} | build ${info.buildMs}ms`;
+window.__info = info;
+const before = { ...renderer.info.memory };
+if (P.get('dispose') === '1') {
+  vms.dispose();
+  info.disposed = { ...renderer.info.memory };
+  info.base = base;
+  info.before = before;
+}
+window.__ready = true;
+</script>
+</body>
+</html>

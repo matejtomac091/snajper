@@ -9,6 +9,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import {
   TICK_RATE, INTERP_DELAY, MAX_HP, RESPAWN_TIME, SPAWN_PROTECT, MATCH_TIME, END_TIME,
   MAX_PLAYERS, MAX_BOTS, P, W, SKINS, PISTOL, spreadFor, pistolSpread, eyeHeight, aimDir,
+  MODES, SCORE_LIMIT, FLAG,
 } from './public/shared/config.js';
 import { buildMap } from './public/shared/map.js';
 import { createBody, stepBody, blocked } from './public/shared/physics.js';
@@ -33,6 +34,8 @@ if (process.env.SPAWNS) {
   // samo za testove: "x,z;x,z"
   MAP.spawns = process.env.SPAWNS.split(';').map((s) => s.split(',').map(Number));
 }
+const FLAG_RETURN = Number(process.env.FLAG_RETURN) || FLAG.returnTime; // s, testovi ga skrate
+const TEAM_SWITCH_GAP = 5000; // ms između dvije promjene tima
 const MAX_Y = 9.5;
 const BOT_RANGE = 95;
 const BOT_NAMES = ['Bot Ivo', 'Bot Ana', 'Bot Luka', 'Bot Mia', 'Bot Toni', 'Bot Sara', 'Bot Dino', 'Bot Lea'];
@@ -118,7 +121,7 @@ const server = http.createServer(serveStatic);
 const rooms = new Map();
 
 class Room {
-  constructor(code, botFill) {
+  constructor(code, botFill, mode = 'ffa') {
     this.code = code;
     this.players = new Map();
     this.nextId = 1;
@@ -127,6 +130,9 @@ class Room {
     this.state = 'play';
     this.timeLeft = MATCH_SECONDS;
     this.endAt = 0;
+    this.mode = mode;
+    this.teamScore = [0, 0];
+    this.flags = mode === 'ctf' ? makeFlags() : null;
   }
 
   humans() {
@@ -188,10 +194,12 @@ function makePlayer(room, name, ws, bot, skin = 'klasik') {
     admin: false, adminTries: 0, cheats: {},
     skin: SKINS.includes(skin) ? skin : 'klasik', streak: 0,
     pistolAmmo: 0, pistolLastShot: -1e9, holding: 'rifle',
+    team: isTeamMode(room) ? pickTeam(room) : null, teamSwitchAt: -1e9,
     body: null,
     ai: bot ? {
       target: null, readyAt: 0, nextScan: 0, nextShotGap: 0, goal: null, goalUntil: 0,
       stuckCheck: 0, stuck: 0, lastX: 0, lastZ: 0, strafeDir: 1, strafeUntil: 0, crouchToShoot: false,
+      detourUntil: 0,
     } : null,
   };
   room.players.set(id, p);
@@ -200,19 +208,203 @@ function makePlayer(room, name, ws, bot, skin = 'klasik') {
 
 function roster(room) {
   return [...room.players.values()].map((p) => ({
-    id: p.id, name: p.name, hue: p.hue, kills: p.kills, deaths: p.deaths, bot: p.bot, skin: p.skin,
+    id: p.id, name: p.name, hue: p.hue, kills: p.kills, deaths: p.deaths, bot: p.bot, skin: p.skin, team: p.team,
   }));
+}
+
+/* ------------------------------------------------------------------ načini igre i timovi */
+
+function isTeamMode(room) {
+  return room.mode === 'tdm' || room.mode === 'ctf';
+}
+
+// Prijateljske vatre nema: u timskim načinima suigrača ne ozljeđuje ni metak ni eksplozija.
+function canHurt(room, from, to) {
+  return !(isTeamMode(room) && from.team === to.team);
+}
+
+function teamCounts(room) {
+  const n = [0, 0];
+  for (const p of room.players.values()) if (p.team !== null) n[p.team]++;
+  return n;
+}
+
+// Novi igrač (i bot) ide u manji tim, a kad su jednaki, nasumično.
+function pickTeam(room) {
+  const n = teamCounts(room);
+  if (n[0] !== n[1]) return n[0] < n[1] ? 0 : 1;
+  return Math.random() < 0.5 ? 0 : 1;
+}
+
+// Kod promjene načina: ljudi se izmjenično dijele u timove, a botovi popune manji tim.
+function assignTeams(room) {
+  const all = [...room.players.values()];
+  for (const p of all) p.team = null;
+  if (!isTeamMode(room)) return;
+  const humans = all.filter((p) => !p.bot).sort(() => Math.random() - 0.5);
+  const first = Math.random() < 0.5 ? 0 : 1;
+  humans.forEach((p, i) => { p.team = (first + i) % 2; });
+  for (const p of all) if (p.bot) p.team = pickTeam(room);
+}
+
+function scoreLimit(room) {
+  return SCORE_LIMIT[room.mode] || 0;
+}
+
+function winningTeam(room) {
+  const [r, b] = room.teamScore;
+  return r > b ? 0 : b > r ? 1 : -1;
+}
+
+function addTeamScore(room, team) {
+  if (room.state === 'play' && team !== null) room.teamScore[team]++;
+}
+
+function setMode(room, mode, t) {
+  room.mode = mode;
+  room.flags = mode === 'ctf' ? makeFlags() : null;
+  assignTeams(room);
+  room.broadcast({ t: 'mode', mode, lim: scoreLimit(room), players: roster(room) });
+  resetMatch(room, t);
+}
+
+function setTeam(room, p, team, t) {
+  dropFlag(room, p, t);
+  p.team = team;
+  room.broadcast({ t: 'team', id: p.id, team });
+  if (p.alive && room.state === 'play') spawn(room, p);
+}
+
+// "Promijeni tim" iz menija. Ako bi timovi bili neravnopravni, s igračem se zamijeni bot iz drugog tima.
+function onTeamSwitch(room, p, t) {
+  if (!isTeamMode(room) || p.team === null) return;
+  const refuse = (err) => send(p, { t: 'team', id: p.id, team: p.team, err });
+  if (t - p.teamSwitchAt < TEAM_SWITCH_GAP) {
+    refuse('Pričekaj malo prije nove promjene tima.');
+    return;
+  }
+  const from = p.team;
+  const to = 1 - from;
+  const n = teamCounts(room);
+  let swap = null;
+  if (Math.abs(n[to] + 1 - (n[from] - 1)) > 1) {
+    swap = [...room.players.values()].reverse().find((o) => o.bot && o.team === to);
+    if (!swap) {
+      refuse('Ne može: timovi bi bili neravnopravni.');
+      return;
+    }
+  }
+  p.teamSwitchAt = t;
+  setTeam(room, p, to, t);
+  if (swap) setTeam(room, swap, from, t);
+}
+
+/* ------------------------------------------------------------------ zastave (CTF) */
+
+// state: 0 u bazi, 1 netko je nosi, 2 ispuštena na tlu
+function makeFlags() {
+  return MAP.flags.map(([x, z], team) => ({ team, state: 0, x, y: 0, z, carrier: null, dropAt: 0 }));
+}
+
+function flagEvent(room, f, e, p) {
+  room.broadcast({ t: 'flag', e, f: f.team, id: p ? p.id : 0 });
+}
+
+function returnFlag(room, f, p) {
+  [f.x, f.z] = MAP.flags[f.team];
+  f.y = 0;
+  f.state = 0;
+  f.carrier = null;
+  flagEvent(room, f, 'ret', p);
+}
+
+// Nosač je umro, izašao ili promijenio tim: zastava pada na tlo ispod mjesta gdje je stajao.
+function dropFlag(room, p, t) {
+  if (!room.flags) return;
+  for (const f of room.flags) {
+    if (f.carrier !== p) continue;
+    f.state = 2;
+    f.carrier = null;
+    f.dropAt = t;
+    f.x = p.x;
+    f.z = p.z;
+    f.y = Math.max(0, p.y + 0.1 - rayWorld(BOXES, p.x, p.y + 0.1, p.z, 0, -1, 0, 60));
+    flagEvent(room, f, 'drop', p);
+  }
+}
+
+function touches(p, x, y, z) {
+  return Math.hypot(p.x - x, p.z - z) <= FLAG.touch && Math.abs(p.y - y) <= 2;
+}
+
+function tickFlags(room, t) {
+  for (const f of room.flags) {
+    if (f.state === 1) {
+      f.x = f.carrier.x;
+      f.y = f.carrier.y;
+      f.z = f.carrier.z;
+    } else if (f.state === 2 && t - f.dropAt >= FLAG_RETURN * 1000) {
+      returnFlag(room, f, null);
+    }
+  }
+  for (const p of room.players.values()) {
+    if (!p.alive || p.team === null) continue;
+    for (const f of room.flags) {
+      if (f.state === 1 || !touches(p, f.x, f.y, f.z)) continue;
+      if (f.team !== p.team) {
+        f.state = 1;
+        f.carrier = p;
+        flagEvent(room, f, 'take', p);
+      } else if (f.state === 2) {
+        returnFlag(room, f, p);
+      }
+    }
+    // Osvajanje: tuđa zastava donesena do vlastitog postolja dok je vlastita zastava u bazi.
+    const own = room.flags[p.team];
+    const enemy = room.flags[1 - p.team];
+    if (enemy.carrier === p && own.state === 0 && touches(p, own.x, own.y, own.z)) {
+      addTeamScore(room, p.team);
+      room.broadcast({ t: 'flag', e: 'cap', f: enemy.team, id: p.id });
+      [enemy.x, enemy.z] = MAP.flags[enemy.team];
+      enemy.y = 0;
+      enemy.state = 0;
+      enemy.carrier = null;
+    }
+  }
+}
+
+function flagSnap(room) {
+  return room.flags.map((f) => [f.state, r2(f.x), r2(f.y), r2(f.z), f.carrier ? f.carrier.id : 0]);
+}
+
+// Poziva se nakon svakog ubojstva: bod timu u TDM-u, ispuštanje zastave u CTF-u.
+function onKillModes(room, from, to, t) {
+  if (room.mode === 'tdm' && from.team !== to.team) addTeamScore(room, from.team);
+  dropFlag(room, to, t);
 }
 
 /* ------------------------------------------------------------------ pojava i povijest položaja */
 
+// U timskim načinima: samo mjesta na polovici svog tima (crveni x+z<0, plavi x+z>0),
+// najdalje od protivnika, a ne na suigraču. Inače najdalje od svih.
 function pickSpawn(room, self) {
   const others = [...room.players.values()].filter((o) => o !== self && o.alive);
-  const scored = MAP.spawns
+  const team = isTeamMode(room) ? self.team : null;
+  let spots = MAP.spawns;
+  if (team !== null) {
+    const half = spots.filter(([x, z]) => (team === 0 ? x + z < 0 : x + z > 0));
+    if (half.length) spots = half;
+  }
+  const scored = spots
     .map(([x, z]) => {
       let d = Infinity;
-      for (const o of others) d = Math.min(d, Math.hypot(o.x - x, o.z - z));
-      return { x, z, d };
+      let taken = false;
+      for (const o of others) {
+        const dist = Math.hypot(o.x - x, o.z - z);
+        if (team !== null && o.team === team) taken ||= dist < 2;
+        else d = Math.min(d, dist);
+      }
+      return { x, z, d: taken ? -1 : d };
     })
     .sort((a, b) => b.d - a.d);
   const choices = process.env.SPAWNS ? 1 : Math.min(3, scored.length);
@@ -385,7 +577,7 @@ function traceShot(room, p, dx, dy, dz, spread, range, t, tag) {
   let part = null;
   const rewindTo = p.bot ? t : t - Math.min(350, p.rtt / 2 + INTERP_DELAY + 25);
   for (const o of room.players.values()) {
-    if (o === p || !o.alive || t < o.protectUntil) continue;
+    if (o === p || !o.alive || t < o.protectUntil || !canHurt(room, p, o)) continue; // suigrač: metak prolazi
     const q = posAt(o, rewindTo);
     const h = rayHitbox(ox, oy, oz, dx, dy, dz, q.x, q.y, q.z, q.c);
     if (h && h.t < dist) {
@@ -464,7 +656,7 @@ function firePistol(room, p, dx, dy, dz) {
 function explode(room, p, x, y, z, t, rewindTo) {
   room.broadcast({ t: 'boom', x: r2(x), y: r2(y), z: r2(z), by: p.id, r: PISTOL.radius });
   for (const o of room.players.values()) {
-    if (o === p || !o.alive || t < o.protectUntil || o.cheats.god) continue;
+    if (o === p || !o.alive || t < o.protectUntil || o.cheats.god || !canHurt(room, p, o)) continue;
     const q = posAt(o, rewindTo);
     const tx = q.x - x, ty = q.y + (q.c ? 0.7 : 1.1) - y, tz = q.z - z;
     const dist = Math.hypot(tx, ty, tz);
@@ -503,6 +695,7 @@ function killPlayer(room, from, to, t, w, hs) {
   from.kills++;
   from.streak++;
   room.broadcast({ t: 'kill', k: from.id, v: to.id, hs, w, kk: from.kills, vd: to.deaths });
+  onKillModes(room, from, to, t);
   if (!from.bot && from.streak % PISTOL.streak === 0) {
     from.pistolAmmo = PISTOL.mag;
     send(from, { t: 'pistol', n: from.pistolAmmo });
@@ -521,6 +714,25 @@ function randomGround() {
   return MAP.spawns[Math.floor(Math.random() * MAP.spawns.length)].slice();
 }
 
+// Slobodno mjesto do r metara od (x, z): zaobilaznica kad bot zapne na putu do zastave.
+function nearGround(x, z, r) {
+  const A = MAP.arena - 2;
+  for (let i = 0; i < 12; i++) {
+    const nx = clamp(x + (Math.random() * 2 - 1) * r, -A, A);
+    const nz = clamp(z + (Math.random() * 2 - 1) * r, -A, A);
+    if (!blocked(BOXES, nx, 0.01, nz, P.height)) return [nx, nz];
+  }
+  return randomGround();
+}
+
+// CTF cilj bota: s tuđom zastavom kući, inače po tuđu zastavu ako je nitko ne nosi, inače null (luta).
+function ctfGoal(room, b) {
+  const enemy = room.flags[1 - b.team];
+  if (enemy.carrier === b) return MAP.flags[b.team];
+  if (enemy.state !== 1) return [enemy.x, enemy.z];
+  return null;
+}
+
 function syncBots(room) {
   const humans = room.humans();
   // Botovi popunjavaju sobu dok je praznjikava i odlaze kako ulaze pravi igrači,
@@ -533,9 +745,16 @@ function syncBots(room) {
   if (bots.length < want) {
     const name = BOT_NAMES[room.botSerial++ % BOT_NAMES.length];
     const b = makePlayer(room, name, null, true, SKINS[Math.floor(Math.random() * SKINS.length)]);
-    room.broadcast({ t: 'join', id: b.id, name: b.name, hue: b.hue, bot: true, skin: b.skin });
+    room.broadcast({ t: 'join', id: b.id, name: b.name, hue: b.hue, bot: true, skin: b.skin, team: b.team });
   } else if (bots.length > want) {
-    const b = bots[bots.length - 1];
+    let b = bots[bots.length - 1];
+    if (isTeamMode(room)) {
+      // odlazi bot iz većeg tima, da timovi ostanu jednaki
+      const n = teamCounts(room);
+      const bigger = n[0] > n[1] ? 0 : n[1] > n[0] ? 1 : b.team;
+      b = bots.reverse().find((o) => o.team === bigger) || b;
+    }
+    dropFlag(room, b, now());
     room.players.delete(b.id);
     room.broadcast({ t: 'leave', id: b.id });
   }
@@ -549,7 +768,7 @@ function botThink(room, b, t, dt) {
     let bestD = BOT_RANGE;
     const ex = b.x, ey = b.y + eyeHeight(b.crouch), ez = b.z;
     for (const o of room.players.values()) {
-      if (o === b || !o.alive || t < o.protectUntil) continue;
+      if (o === b || !o.alive || t < o.protectUntil || !canHurt(room, b, o)) continue;
       const tx = o.x - ex, ty = o.y + 1.2 - ey, tz = o.z - ez;
       const d = Math.hypot(tx, ty, tz);
       if (d >= bestD || d < 0.5) continue;
@@ -585,8 +804,30 @@ function botThink(room, b, t, dt) {
       ai.crouchToShoot = Math.random() < 0.3;
     }
     const shotSoon = t >= ai.readyAt && t - b.lastShot > ai.nextShotGap - 500;
+    const objective = room.mode === 'ctf' && t >= ai.detourUntil ? ctfGoal(room, b) : null;
     if (shotSoon) {
       crouch = ai.crouchToShoot;
+    } else if (objective) {
+      // CTF: između hitaca bot ne stoji na mjestu nego ide prema zastavi (ili kući s njom).
+      const gx = objective[0] - b.x, gz = objective[1] - b.z;
+      const gl = Math.hypot(gx, gz) || 1;
+      wx = gx / gl;
+      wz = gz / gl;
+      if (t >= ai.stuckCheck) {
+        if (Math.hypot(b.x - ai.lastX, b.z - ai.lastZ) < 0.3) {
+          jump = true;
+          if (++ai.stuck > 2) {
+            ai.goal = nearGround(b.x, b.z, 14);
+            ai.detourUntil = t + 3500;
+            ai.stuck = 0;
+          }
+        } else {
+          ai.stuck = 0;
+        }
+        ai.lastX = b.x;
+        ai.lastZ = b.z;
+        ai.stuckCheck = t + 600;
+      }
     } else {
       wx = Math.cos(b.yaw) * ai.strafeDir;
       wz = -Math.sin(b.yaw) * ai.strafeDir;
@@ -605,7 +846,11 @@ function botThink(room, b, t, dt) {
     }
   } else {
     b.scoped = false;
-    if (!ai.goal || t > ai.goalUntil || Math.hypot(ai.goal[0] - b.x, ai.goal[1] - b.z) < 1.5) {
+    const objective = room.mode === 'ctf' && room.state === 'play' && t >= ai.detourUntil ? ctfGoal(room, b) : null;
+    if (objective) {
+      ai.goal = objective;
+      ai.goalUntil = t + 12000;
+    } else if (!ai.goal || t > ai.goalUntil || Math.hypot(ai.goal[0] - b.x, ai.goal[1] - b.z) < 1.5) {
       ai.goal = randomGround();
       ai.goalUntil = t + 12000;
     }
@@ -620,7 +865,8 @@ function botThink(room, b, t, dt) {
         ai.stuck++;
         jump = true;
         if (ai.stuck > 2) {
-          ai.goal = randomGround();
+          ai.goal = room.mode === 'ctf' ? nearGround(b.x, b.z, 14) : randomGround();
+          ai.detourUntil = t + 3500;
           ai.stuck = 0;
         }
       } else {
@@ -647,12 +893,19 @@ function endMatch(room, t) {
   room.endAt = t + END_SECONDS * 1000;
   room.timeLeft = 0;
   const board = roster(room).sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
-  room.broadcast({ t: 'end', board, next: END_SECONDS });
+  const msg = { t: 'end', board, next: END_SECONDS };
+  if (isTeamMode(room)) {
+    msg.ts = room.teamScore;
+    msg.win = winningTeam(room); // -1 neriješeno
+  }
+  room.broadcast(msg);
 }
 
 function resetMatch(room, t) {
   room.state = 'play';
   room.timeLeft = MATCH_SECONDS;
+  room.teamScore = [0, 0];
+  if (room.flags) room.flags = makeFlags();
   for (const p of room.players.values()) {
     p.kills = 0;
     p.deaths = 0;
@@ -669,7 +922,8 @@ function tickRoom(room, t) {
   const dt = 1 / TICK_RATE;
   if (room.state === 'play') {
     room.timeLeft -= dt;
-    if (room.timeLeft <= 0) endMatch(room, t);
+    const lim = scoreLimit(room);
+    if (room.timeLeft <= 0 || (lim && (room.teamScore[0] >= lim || room.teamScore[1] >= lim))) endMatch(room, t);
   } else if (t >= room.endAt) {
     resetMatch(room, t);
   }
@@ -685,6 +939,7 @@ function tickRoom(room, t) {
     }
     if (p.bot) botThink(room, p, t, dt);
   }
+  if (room.flags && room.state === 'play') tickFlags(room, t);
   const list = [];
   for (const p of room.players.values()) {
     if (!p.alive) continue;
@@ -693,7 +948,10 @@ function tickRoom(room, t) {
       | (p.holding === 'pistol' && hasPistol(p) ? 8 : 0);
     list.push([p.id, r2(p.x), r2(p.y), r2(p.z), r3(p.yaw), r3(p.pitch), f]);
   }
-  const s = JSON.stringify({ t: 's', p: list, tl: Math.max(0, Math.ceil(room.timeLeft)) });
+  const snap = { t: 's', p: list, tl: Math.max(0, Math.ceil(room.timeLeft)) };
+  if (isTeamMode(room)) snap.ts = room.teamScore;
+  if (room.flags) snap.fl = flagSnap(room);
+  const s = JSON.stringify(snap);
   for (const p of room.players.values()) {
     if (p.ws && p.ws.bufferedAmount < 262144) sendRaw(p, s); // sporim vezama preskačemo stanje umjesto da gomilamo
   }
@@ -754,6 +1012,7 @@ function onAdmin(room, p, m) {
       if (target.bot) {
         room.botFixed = true;
         room.botFill = Math.max(0, [...room.players.values()].filter((o) => o.bot).length - 1);
+        dropFlag(room, target, t);
         room.players.delete(target.id);
         room.broadcast({ t: 'leave', id: target.id });
       } else {
@@ -768,6 +1027,9 @@ function onAdmin(room, p, m) {
       break;
     case 'restart':
       resetMatch(room, t);
+      break;
+    case 'mode':
+      if (MODES.includes(m.mode) && m.mode !== room.mode) setMode(room, m.mode, t);
       break;
     case 'end':
       if (room.state === 'play') endMatch(room, t);
@@ -823,17 +1085,21 @@ wss.on('connection', (ws) => {
         return;
       }
       if (!r) {
-        r = new Room(code, clamp(Math.floor(+m.bots) || 0, 0, MAX_BOTS));
+        const mode = MODES.includes(m.mode) ? m.mode : 'ffa';
+        r = new Room(code, clamp(Math.floor(+m.bots) || 0, 0, MAX_BOTS), mode);
         rooms.set(code, r);
-        console.log(`soba "${code}" otvorena`);
+        console.log(`soba "${code}" otvorena (${mode})`);
       }
       room = r;
       player = makePlayer(room, cleanName(m.name), ws, false, String(m.skin ?? ''));
       send(player, {
         t: 'welcome', id: player.id, room: code, state: room.state,
         tl: Math.ceil(room.timeLeft), players: roster(room),
+        mode: room.mode, team: player.team, teamScore: room.teamScore, scoreLimit: scoreLimit(room),
       });
-      room.broadcast({ t: 'join', id: player.id, name: player.name, hue: player.hue, bot: false, skin: player.skin }, player);
+      room.broadcast({
+        t: 'join', id: player.id, name: player.name, hue: player.hue, bot: false, skin: player.skin, team: player.team,
+      }, player);
       if (room.state === 'play') spawn(room, player);
       return;
     }
@@ -848,12 +1114,14 @@ wss.on('connection', (ws) => {
         break;
       case 'alogin': onAdminLogin(room, player, m); break;
       case 'admin': if (player.admin) onAdmin(room, player, m); break;
+      case 'team': onTeamSwitch(room, player, t); break;
       default: break;
     }
   });
 
   ws.on('close', () => {
     if (!player || !room) return;
+    dropFlag(room, player, now());
     room.players.delete(player.id);
     room.broadcast({ t: 'leave', id: player.id });
     if (room.humans() === 0) {
