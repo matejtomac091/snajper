@@ -956,6 +956,7 @@ let endInfo = null;
 let isAdmin = false;
 let cheats = {};
 let lostReason = '';
+let myVote = null;
 let shakeUntil = 0;
 let shakeAmp = 0;
 // Način igre sobe i timski rezultat. flagState: [[stanje, x, y, z, idNosača], ...] iz stanja sa servera (CTF).
@@ -1154,6 +1155,7 @@ function handle(m) {
       break;
     }
     case 'end': onEnd(m); break;
+    case 'votes': onVotes(m); break;
     case 'mode': onMode(m); break;
     case 'team': onTeam(m); break;
     case 'flag': onFlag(m); break;
@@ -1165,7 +1167,8 @@ function handle(m) {
       for (const r of roster.values()) { r.kills = 0; r.deaths = 0; }
       me.pistolAmmo = 0;
       me.streak = 0;
-      centerMsg('NOVA RUNDA', 2000);
+      centerMsg(`NOVA RUNDA · ${MODE_NAMES[m.mode] || ''}`, 2500);
+      if (inGame && !locked) $('pause').hidden = false;
       break;
     case 'err':
       failLobby(m.msg);
@@ -1346,11 +1349,54 @@ function onEnd(m) {
   else if (m.win === -1) title = 'Neriješeno!';
   renderBoard($('end'), title);
   if (m.win === 0 || m.win === 1) $('end').querySelector('h3').style.color = TEAM_TEXT[m.win];
+  myVote = null;
+  $('end').append(buildVote(m.mode));
   const next = document.createElement('div');
   next.className = 'next';
   next.id = 'endNext';
   $('end').append(next);
   $('end').hidden = false;
+}
+
+// Glasanje za način sljedeće runde: tipke 1/2/3 ili klik (kad miš nije zaključan).
+function buildVote(current) {
+  const box = document.createElement('div');
+  box.className = 'vote';
+  const title = document.createElement('div');
+  title.className = 'vote-title';
+  title.textContent = `Glasaj za sljedeći način (tipke 1, 2, 3). Bez glasova ostaje: ${MODE_NAMES[current]}`;
+  const row = document.createElement('div');
+  row.className = 'vote-row';
+  MODES.forEach((mode, i) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.dataset.vote = mode;
+    const key = document.createElement('span');
+    key.className = 'key';
+    key.textContent = `[${i + 1}]`;
+    const cnt = document.createElement('span');
+    cnt.className = 'cnt';
+    cnt.textContent = '0';
+    b.append(key, document.createTextNode(MODE_NAMES[mode]), cnt);
+    b.addEventListener('click', () => castVote(mode));
+    row.append(b);
+  });
+  box.append(title, row);
+  return box;
+}
+
+function castVote(mode) {
+  if (!ended || !MODES.includes(mode)) return;
+  myVote = mode;
+  send({ t: 'vote', mode });
+  for (const b of document.querySelectorAll('[data-vote]')) b.classList.toggle('mine', b.dataset.vote === mode);
+}
+
+function onVotes(m) {
+  for (const b of document.querySelectorAll('[data-vote]')) {
+    const cnt = b.querySelector('.cnt');
+    if (cnt) cnt.textContent = String(m.v[b.dataset.vote] || 0);
+  }
 }
 
 /* ================================================================ obavijesti */
@@ -1847,7 +1893,7 @@ async function lockPointer() {
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === canvas;
   if (!inGame) return;
-  $('pause').hidden = locked;
+  $('pause').hidden = locked || ended;
   if (!locked) {
     input.keys.clear();
     input.rmb = false;
@@ -1907,6 +1953,10 @@ document.addEventListener('keydown', (e) => {
       renderBoard($('board'), 'Rezultati');
       $('board').hidden = false;
     }
+    return;
+  }
+  if (ended && ['Digit1', 'Digit2', 'Digit3'].includes(e.code)) {
+    castVote(MODES[Number(e.code.slice(5)) - 1]);
     return;
   }
   if (!locked) return;
@@ -2049,6 +2099,72 @@ function takeAutojoin() {
   }
 }
 
+/* ---------------- aktivne sobe u izborniku: u koji način ulaziš */
+
+const SHORT_MODE = { ffa: 'FFA', tdm: 'TDM', ctf: 'CTF' };
+const cleanRoomCode = (s) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 12) || 'razred';
+// 1 igrač, 2 igrača, 5 igrača · 1 bot, 2 bota, 5 botova
+const isOne = (n) => n % 10 === 1 && n % 100 !== 11;
+const isFew = (n) => n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14);
+const playersWord = (n) => (isOne(n) ? 'igrač' : 'igrača');
+const botsWord = (n) => (isOne(n) ? 'bot' : isFew(n) ? 'bota' : 'botova');
+let lobbyRooms = [];
+let chosenMode = 'ffa';
+
+async function refreshRooms() {
+  if (inGame) return;
+  try {
+    const res = await fetch('/rooms', { cache: 'no-store' });
+    lobbyRooms = res.ok ? await res.json() : [];
+  } catch {
+    lobbyRooms = [];
+  }
+  renderRoomStatus();
+}
+
+function renderRoomStatus() {
+  const code = cleanRoomCode($('room').value);
+  const room = lobbyRooms.find((r) => r.code === code);
+  const status = $('roomStatus');
+  const strong = (text) => {
+    const b = document.createElement('b');
+    b.textContent = text;
+    return b;
+  };
+  if (room) {
+    $('mode').value = room.mode;
+    $('mode').disabled = true;
+    $('bots').disabled = true;
+    status.replaceChildren(
+      'Soba ', strong(code), ' već igra ', strong(MODE_NAMES[room.mode]),
+      ` (${room.players} ${playersWord(room.players)}${room.bots ? ` i ${room.bots} ${botsWord(room.bots)}` : ''}). `,
+      'Ulaziš u taj način, a sljedeći se bira glasanjem na kraju runde.',
+    );
+  } else {
+    $('mode').disabled = false;
+    $('bots').disabled = false;
+    $('mode').value = chosenMode;
+    status.replaceChildren(
+      'Nova soba ', strong(code), ': ti biraš način igre i botove. Na kraju svake runde igrači glasaju za sljedeći način.',
+    );
+  }
+  const list = $('roomList');
+  list.replaceChildren();
+  for (const r of lobbyRooms.slice(0, 8)) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = `${r.code} · ${SHORT_MODE[r.mode] || r.mode} · ${r.players}`;
+    b.title = `${MODE_NAMES[r.mode]}, ${r.players} ${playersWord(r.players)}`;
+    if (r.code === code) b.className = 'on';
+    b.addEventListener('click', () => {
+      $('room').value = r.code;
+      renderRoomStatus();
+    });
+    list.append(b);
+  }
+  list.hidden = lobbyRooms.length === 0;
+}
+
 function initLobby() {
   $('settingsHome').append($('settings'));
   bindSettings();
@@ -2057,6 +2173,13 @@ function initLobby() {
   $('room').value = params.get('soba') || settings.room;
   $('bots').value = String(settings.bots);
   $('mode').value = MODES.includes(settings.mode) ? settings.mode : 'ffa';
+  chosenMode = $('mode').value;
+  $('mode').addEventListener('change', () => {
+    if (!$('mode').disabled) chosenMode = $('mode').value;
+  });
+  $('room').addEventListener('input', renderRoomStatus);
+  refreshRooms();
+  const roomTimer = setInterval(() => (inGame ? clearInterval(roomTimer) : refreshRooms()), 5000);
   $('skin').value = SKINS.includes(settings.skin) ? settings.skin : 'klasik';
   $('skin').addEventListener('change', () => {
     settings.skin = $('skin').value;
@@ -2072,7 +2195,7 @@ function initLobby() {
     const room = $('room').value.trim() || 'razred';
     const bots = Number($('bots').value) || 0;
     const skin = $('skin').value;
-    const gameMode = $('mode').value;
+    const gameMode = $('mode').disabled ? chosenMode : $('mode').value;
     if (!name) {
       $('lobbyError').textContent = 'Upiši ime.';
       $('name').focus();

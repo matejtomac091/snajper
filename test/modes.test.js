@@ -359,6 +359,59 @@ async function ctfTests(port) {
   D.close();
 }
 
+// Popis soba u izborniku i glasanje za sljedeći način na kraju runde.
+async function voteTests(port) {
+  const A = new ModeClient(port, { mode: 'tdm' });
+  const B = new ModeClient(port);
+  const wA = await A.connect('Va', 'glas1');
+  const wB = await B.connect('Vb', 'glas1');
+  assert.equal(wA.mode, 'tdm');
+  assert.equal(wB.mode, 'tdm', 'drugi igrač ulazi u način koji je izabrao prvi');
+  const rooms = await fetch(`http://localhost:${port}/rooms`).then((r) => r.json());
+  const mine = rooms.find((r) => r.code === 'glas1');
+  assert.ok(mine, 'soba je na popisu');
+  assert.equal(mine.mode, 'tdm');
+  assert.equal(mine.players, 2);
+  console.log('  /rooms: soba, način i broj igrača ✔');
+
+  A.send({ t: 'vote', mode: 'ctf' });
+  await A.none('votes', () => true, 300);
+  console.log('  glas usred runde se ne broji ✔');
+
+  A.send({ t: 'alogin', key: ADMIN_KEY });
+  await A.wait('admin', (m) => m.ok);
+  A.send({ t: 'admin', a: 'end' });
+  const end = await B.wait('end');
+  assert.equal(end.mode, 'tdm');
+  A.send({ t: 'vote', mode: 'ctf' });
+  B.send({ t: 'vote', mode: 'nesto' });
+  B.send({ t: 'vote', mode: 'ctf' });
+  await B.wait('votes', (m) => m.v.ctf === 2 && m.v.tdm === 0 && m.v.ffa === 0);
+  const next = await B.wait('mode', () => true, 5000);
+  assert.equal(next.mode, 'ctf');
+  const reset = await B.wait('reset', () => true, 2000);
+  assert.equal(reset.mode, 'ctf');
+  console.log('  glasanje: 2 glasa za CTF → nova runda u CTF-u ✔');
+
+  // izjednačeno (FFA : TDM, a trenutni je CTF) → jedan od ta dva; bez glasova ostaje isti način
+  A.send({ t: 'admin', a: 'end' });
+  await B.wait('end');
+  for (const m of B.log) m._used = true;
+  A.send({ t: 'vote', mode: 'ffa' });
+  B.send({ t: 'vote', mode: 'tdm' });
+  const tie = await B.wait('mode', () => true, 5000);
+  assert.ok(['ffa', 'tdm'].includes(tie.mode), `izjednačeno daje ${tie.mode}`);
+  A.send({ t: 'admin', a: 'end' });
+  await B.wait('end');
+  for (const m of B.log) m._used = true;
+  const kept = await B.wait('reset', () => true, 5000);
+  assert.equal(kept.mode, tie.mode);
+  await B.none('mode', () => true, 300);
+  console.log(`  izjednačeno → ${tie.mode}; bez glasova ostaje isti način ✔`);
+  A.close();
+  B.close();
+}
+
 export async function run() {
   flagPlacementTests();
   const s = await startServer(BASE + 3, { SPAWNS, ADMIN_KEY, FLAG_RETURN: String(FLAG_RETURN), END_TIME: '2' });
@@ -370,6 +423,7 @@ export async function run() {
     await teamTests(BASE + 3);
     await botTeamTests(BASE + 3);
     await ctfTests(BASE + 3);
+    await voteTests(BASE + 3);
     const flagEvents = bots.log.filter((m) => m.t === 'flag').length;
     console.log(`  CTF s 4 bota: ${flagEvents} događaja sa zastavama, server bez grešaka`);
   } finally {

@@ -59,7 +59,11 @@ Tab rezultati · Esc pauza
 
 ## Načini igre
 
-Način bira onaj tko prvi otvori sobu (izbornik, **Način igre**). Admin ga može promijeniti usred igre.
+Način bira onaj tko prvi otvori sobu (izbornik, **Način igre**). Izbornik pokazuje aktivne sobe:
+ako upišeš sobu koja već igra, piše u kojem načinu ulaziš i tada se način ne bira. Na kraju svake runde
+(15 s) igrači glasaju za sljedeći način tipkama 1, 2, 3 ili klikom. Pobjeđuje najviše glasova, kod
+izjednačenja ostaje trenutni način (ako je među prvima), a bez glasova se igra isti način.
+Admin može promijeniti način i usred igre.
 
 - **Svi protiv svih**: svatko za sebe, pobjeđuje tko ima najviše ubojstava.
 - **Timski deathmatch**: Crveni protiv Plavih. Ubojstvo protivnika je bod za tim, prvi do 30 pobjeđuje.

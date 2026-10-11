@@ -74,6 +74,16 @@ function serveStatic(req, res) {
     res.end();
     return;
   }
+  if (pathname === '/rooms') {
+    // Izbornik pokazuje aktivne sobe i njihov način, da se zna u što ulaziš.
+    const list = [...rooms.values()]
+      .map((r) => ({ code: r.code, mode: r.mode, players: r.humans(), bots: r.players.size - r.humans(), state: r.state }))
+      .sort((a, b) => b.players - a.players)
+      .slice(0, 20);
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+    res.end(JSON.stringify(list));
+    return;
+  }
   if (pathname === '/health') {
     res.writeHead(200, { 'content-type': 'text/plain' });
     res.end('ok');
@@ -133,6 +143,7 @@ class Room {
     this.mode = mode;
     this.teamScore = [0, 0];
     this.flags = mode === 'ctf' ? makeFlags() : null;
+    this.votes = new Map();
   }
 
   humans() {
@@ -893,12 +904,44 @@ function endMatch(room, t) {
   room.endAt = t + END_SECONDS * 1000;
   room.timeLeft = 0;
   const board = roster(room).sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
-  const msg = { t: 'end', board, next: END_SECONDS };
+  room.votes = new Map();
+  const msg = { t: 'end', board, next: END_SECONDS, mode: room.mode };
   if (isTeamMode(room)) {
     msg.ts = room.teamScore;
     msg.win = winningTeam(room); // -1 neriješeno
   }
   room.broadcast(msg);
+}
+
+/* ------------------------------------------------------------------ glasanje za sljedeći način */
+
+function voteTally(room) {
+  const v = Object.fromEntries(MODES.map((m) => [m, 0]));
+  for (const mode of room.votes?.values() ?? []) v[mode]++;
+  return v;
+}
+
+function onVote(room, p, m) {
+  if (room.state !== 'end' || p.bot || !MODES.includes(m.mode)) return;
+  room.votes.set(p.id, m.mode);
+  room.broadcast({ t: 'votes', v: voteTally(room) });
+}
+
+// Najviše glasova pobjeđuje. Kod izjednačenja ostaje trenutni način ako je među prvima, inače nasumično.
+// Bez glasova se igra isti način.
+function pickNextMode(room) {
+  const v = voteTally(room);
+  const best = Math.max(...Object.values(v));
+  if (best === 0) return room.mode;
+  const top = MODES.filter((m) => v[m] === best);
+  return top.includes(room.mode) ? room.mode : top[Math.floor(Math.random() * top.length)];
+}
+
+function nextRound(room, t) {
+  const mode = pickNextMode(room);
+  room.votes = new Map();
+  if (mode !== room.mode) setMode(room, mode, t);
+  else resetMatch(room, t);
 }
 
 function resetMatch(room, t) {
@@ -915,7 +958,7 @@ function resetMatch(room, t) {
     p.alive = false;
     p.respawnAt = t;
   }
-  room.broadcast({ t: 'reset', tl: MATCH_SECONDS });
+  room.broadcast({ t: 'reset', tl: MATCH_SECONDS, mode: room.mode });
 }
 
 function tickRoom(room, t) {
@@ -925,7 +968,7 @@ function tickRoom(room, t) {
     const lim = scoreLimit(room);
     if (room.timeLeft <= 0 || (lim && (room.teamScore[0] >= lim || room.teamScore[1] >= lim))) endMatch(room, t);
   } else if (t >= room.endAt) {
-    resetMatch(room, t);
+    nextRound(room, t);
   }
   syncBots(room);
   for (const p of room.players.values()) {
@@ -1115,6 +1158,7 @@ wss.on('connection', (ws) => {
       case 'alogin': onAdminLogin(room, player, m); break;
       case 'admin': if (player.admin) onAdmin(room, player, m); break;
       case 'team': onTeamSwitch(room, player, t); break;
+      case 'vote': onVote(room, player, m); break;
       default: break;
     }
   });
@@ -1123,6 +1167,7 @@ wss.on('connection', (ws) => {
     if (!player || !room) return;
     dropFlag(room, player, now());
     room.players.delete(player.id);
+    if (room.votes?.delete(player.id)) room.broadcast({ t: 'votes', v: voteTally(room) });
     room.broadcast({ t: 'leave', id: player.id });
     if (room.humans() === 0) {
       rooms.delete(room.code);

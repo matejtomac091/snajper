@@ -6,7 +6,7 @@ export const MAX_HP = 100;
 export const RESPAWN_TIME = 3;        // s
 export const SPAWN_PROTECT = 1.5;     // s nakon pojave nitko te ne može pogoditi (prekida se kad pucaš)
 export const MATCH_TIME = 300;        // s, jedna runda
-export const END_TIME = 10;           // s, ekran s rezultatima između rundi
+export const END_TIME = 15;           // s, rezultati i glasanje za sljedeći način između rundi
 export const MAX_PLAYERS = 24;
 export const MAX_BOTS = 8;
 
