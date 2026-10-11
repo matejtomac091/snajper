@@ -14,16 +14,25 @@
       <p class="sub">Multiplayer za razred</p>
       <label>Ime<input id="name" maxlength="16" autocomplete="off" spellcheck="false" placeholder="npr. Matej"></label>
       <label>Soba<input id="room" maxlength="12" autocomplete="off" spellcheck="false" placeholder="razred"></label>
-      <label>Botovi za vježbu
-        <select id="bots">
-          <option value="0">Bez botova</option>
-          <option value="2">2 bota</option>
-          <option value="4">4 bota</option>
-          <option value="6">6 botova</option>
-          <option value="8">8 botova</option>
-        </select>
-      </label>
-      <p class="hint">Botove bira onaj tko prvi otvori sobu. Odlaze sami kako ulaze pravi igrači.</p>
+      <div class="pair">
+        <label>Botovi za vježbu
+          <select id="bots">
+            <option value="0">Bez botova</option>
+            <option value="2">2 bota</option>
+            <option value="4">4 bota</option>
+            <option value="6">6 botova</option>
+            <option value="8">8 botova</option>
+          </select>
+        </label>
+        <label>Način igre
+          <select id="mode">
+            <option value="ffa">Svi protiv svih</option>
+            <option value="tdm">Timski deathmatch</option>
+            <option value="ctf">Zastava (CTF)</option>
+          </select>
+        </label>
+      </div>
+      <p class="hint">Botove i način igre bira onaj tko prvi otvori sobu. Botovi odlaze sami kako ulaze pravi igrači.</p>
       <div class="skin-row">
         <label>Skin
           <select id="skin">
@@ -84,7 +93,11 @@
     <div id="vignette"></div>
     <div id="topbar">
       <span id="kd">0 / 0</span>
-      <span id="timer">5:00</span>
+      <div id="topmid">
+        <span id="timer">5:00</span>
+        <div id="teamScore" hidden><span id="tsRed" class="ts-red"></span><span class="ts-sep">:</span><span id="tsBlue" class="ts-blue"></span></div>
+        <div id="flagHud" hidden><span id="flagMine"></span><span class="ts-sep">·</span><span id="flagTheirs"></span></div>
+      </div>
       <span id="net"></span>
     </div>
     <div id="killfeed"></div>
@@ -112,6 +125,7 @@
       <button id="resume" type="button">KLIKNI ZA IGRU</button>
       <p id="pauseHint" class="hint"></p>
       <p id="roomInfo" class="hint"></p>
+      <button id="teamBtn" class="ghost" type="button" hidden>Promijeni tim</button>
       <button id="copyLink" class="ghost" type="button">Kopiraj link sobe</button>
       <div id="settingsPause"></div>
       <ul class="controls compact">
@@ -149,6 +163,13 @@
             <button class="ghost small" type="button" data-act="restart">Nova runda</button>
             <button class="ghost small" type="button" data-act="end">Završi rundu</button>
           </div>
+          <label>Način igre (kreće nova runda)
+            <select id="adminMode">
+              <option value="ffa">Svi protiv svih</option>
+              <option value="tdm">Timski deathmatch</option>
+              <option value="ctf">Zastava (CTF)</option>
+            </select>
+          </label>
           <label>Botovi
             <select id="adminBots">
               <option value="0">0</option><option value="1">1</option><option value="2">2</option>

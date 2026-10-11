@@ -6,11 +6,11 @@ import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Više agenata/strojeva može vrtjeti testove odjednom: TEST_PORT_BASE=3201 node test/run.js
 const BASE = Number(process.env.TEST_PORT_BASE) || 3101;
 
-function startServer(port, env = {}) {
+export function startServer(port, env = {}) {
   const proc = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: { ...process.env, PORT: String(port), ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
   let errOut = '';
   proc.stderr.on('data', (d) => { errOut += d; });
@@ -21,7 +21,7 @@ function startServer(port, env = {}) {
   });
 }
 
-class Client {
+export class Client {
   constructor(port) {
     this.port = port;
     this.log = [];
@@ -81,7 +81,7 @@ class Client {
   close() { clearInterval(this.timer); this.ws.close(); }
 }
 
-function dirTo(from, to) {
+export function dirTo(from, to) {
   const d = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
   const l = Math.hypot(...d);
   return d.map((v) => v / l);

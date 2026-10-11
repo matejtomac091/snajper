@@ -76,3 +76,16 @@ export const PISTOL = { streak: 3, mag: 8, cooldown: 0.3, range: 150, spreadHip:
 export function pistolSpread(moving) {
   return PISTOL.spreadHip + (moving ? PISTOL.spreadMove : 0);
 }
+
+// Načini igre. Bira ih onaj tko prvi otvori sobu (ili admin usred igre).
+export const MODES = ['ffa', 'tdm', 'ctf'];
+export const MODE_NAMES = { ffa: 'Svi protiv svih', tdm: 'Timski deathmatch', ctf: 'Zastava (CTF)' };
+// Do koliko se igra: ubojstva tima (tdm) ili osvojene zastave (ctf). Inače pobjeđuje tko vodi kad istekne vrijeme.
+export const SCORE_LIMIT = { ffa: 0, tdm: 30, ctf: 3 };
+// Timovi: 0 = Crveni (polovica mape x+z<0), 1 = Plavi (x+z>0). hue je boja lika.
+export const TEAMS = [
+  { name: 'Crveni', color: '#e0473a', hue: 5 },
+  { name: 'Plavi', color: '#3a7be0', hue: 215 },
+];
+// Zastava se uzima dodirom (m), a ispuštena se sama vraća u bazu nakon returnTime sekundi.
+export const FLAG = { touch: 1.6, returnTime: 20 };

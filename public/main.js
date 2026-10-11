@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import {
   P, W, MAX_HP, INTERP_DELAY, RESPAWN_TIME, MATCH_TIME, SKINS, PISTOL, spreadFor, pistolSpread, eyeHeight, aimDir,
+  MODES, MODE_NAMES, TEAMS, FLAG,
 } from './shared/config.js';
 import { buildMap, COLORS } from './shared/map.js';
 import { createBody, stepBody } from './shared/physics.js';
@@ -17,7 +18,7 @@ const angDiff = (a, b) => wrap(b - a);
 
 /* ================================================================ postavke */
 
-const DEFAULTS = { name: '', room: 'razred', bots: 0, sens: 1, quality: 0.5, volume: 0.7, skin: 'klasik' };
+const DEFAULTS = { name: '', room: 'razred', bots: 0, sens: 1, quality: 0.5, volume: 0.7, skin: 'klasik', mode: 'ffa' };
 const settings = (() => {
   try {
     return { ...DEFAULTS, ...JSON.parse(localStorage.getItem('snajper') || '{}') };
@@ -148,7 +149,7 @@ const GLINT = new THREE.SpriteMaterial({
   blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
 });
 
-function nameTag(name) {
+function nameTag(name, color = '#ffffff') {
   const c = document.createElement('canvas');
   c.width = 256;
   c.height = 64;
@@ -159,7 +160,7 @@ function nameTag(name) {
   g.lineWidth = 6;
   g.strokeStyle = 'rgba(0,0,0,0.75)';
   g.strokeText(name, 128, 34);
-  g.fillStyle = '#ffffff';
+  g.fillStyle = color;
   g.fillText(name, 128, 34);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -251,7 +252,8 @@ const SKIN_BUILDERS = {
   },
 };
 
-function makeAvatar(hue, name, skin = 'klasik', withTag = true) {
+// tagColor: boja imena iznad glave (u timskim načinima boja tima).
+function makeAvatar(hue, name, skin = 'klasik', withTag = true, tagColor = '#ffffff') {
   const mats = [];
   const geos = [];
   const kit = {
@@ -300,7 +302,7 @@ function makeAvatar(hue, name, skin = 'klasik', withTag = true) {
   root.add(legs, upper);
   let tag = null;
   if (withTag) {
-    tag = nameTag(name);
+    tag = nameTag(name, tagColor);
     tag.position.y = 2.15;
     root.add(tag);
   }
@@ -571,6 +573,114 @@ function updateBananaFx(dt) {
   }
 }
 
+/* ================================================================ zastave (način Zastava) */
+
+// Sve se napravi jednom: 2 zastave (štap + platno), 2 kruga na postoljima i 2 oznake iznad zastava.
+// Izvan CTF-a samo su skrivene. Platna dijele jednu geometriju pa se val računa jednom po slici.
+const FLAG_W = 1.1, FLAG_H = 0.7, POLE_H = 2.4;
+const clothGeo = new THREE.PlaneGeometry(FLAG_W, FLAG_H, 6, 1);
+clothGeo.translate(FLAG_W / 2 + 0.03, POLE_H - FLAG_H / 2, 0);
+const clothPos = clothGeo.attributes.position;
+const clothU = new Float32Array(clothPos.count);
+for (let i = 0; i < clothPos.count; i++) clothU[i] = (clothPos.getX(i) - 0.03) / FLAG_W;
+const poleGeo = new THREE.CylinderGeometry(0.035, 0.035, POLE_H, 6);
+poleGeo.translate(0, POLE_H / 2, 0);
+const poleMat = new THREE.MeshLambertMaterial({ color: '#d9dde3' });
+const standGeo = new THREE.RingGeometry(FLAG.touch - 0.35, FLAG.touch, 28);
+standGeo.rotateX(-Math.PI / 2);
+
+function markerTexture(color) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d');
+  g.fillStyle = color;
+  g.strokeStyle = '#ffffff';
+  g.lineWidth = 4;
+  g.beginPath();
+  g.moveTo(22, 44);
+  g.lineTo(42, 44);
+  g.lineTo(32, 61);
+  g.closePath();
+  g.fill();
+  g.beginPath();
+  g.arc(32, 26, 21, 0, Math.PI * 2);
+  g.fill();
+  g.stroke();
+  g.fillStyle = '#ffffff';
+  g.fillRect(23, 14, 3, 25);
+  g.beginPath();
+  g.moveTo(26, 14);
+  g.lineTo(43, 20);
+  g.lineTo(26, 27);
+  g.closePath();
+  g.fill();
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+const flagViews = TEAMS.map((team, i) => {
+  const group = new THREE.Group();
+  group.add(
+    new THREE.Mesh(poleGeo, poleMat),
+    new THREE.Mesh(clothGeo, new THREE.MeshLambertMaterial({ color: team.color, side: THREE.DoubleSide })),
+  );
+  const stand = new THREE.Mesh(standGeo, new THREE.MeshBasicMaterial({ color: team.color, transparent: true, opacity: 0.6, depthWrite: false }));
+  stand.position.set(MAP.flags[i][0], 0.03, MAP.flags[i][1]);
+  // Oznaka se vidi kroz zidove (depthTest isključen) i uvijek je iste veličine na ekranu.
+  const marker = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: markerTexture(team.color), depthTest: false, depthWrite: false, sizeAttenuation: false, fog: false,
+  }));
+  marker.renderOrder = 20;
+  group.visible = stand.visible = marker.visible = false;
+  scene.add(group, stand, marker);
+  return { group, stand, marker };
+});
+const MARKER_SIZE = 0.055 / Math.tan((75 * Math.PI) / 360); // udio visine ekrana kod običnog FOV-a
+
+function updateFlags(t) {
+  const ctf = mode === 'ctf' && !!flagState;
+  const ms = MARKER_SIZE * Math.tan((camera.fov * Math.PI) / 360); // isti broj piksela i kad nišaniš
+  for (let i = 0; i < 2; i++) {
+    const v = flagViews[i];
+    v.stand.visible = mode === 'ctf';
+    const f = ctf ? flagState[i] : null;
+    // Zastavu koju nosim ne crtam (bila bi mi pred očima); HUD javlja da je nosim.
+    if (!f || (f[0] === 1 && f[4] === me.id)) {
+      v.group.visible = v.marker.visible = false;
+      continue;
+    }
+    let x = f[1], y = f[2], z = f[3];
+    v.group.scale.setScalar(1);
+    v.group.rotation.y = i === 0 ? Math.PI / 4 : -Math.PI * 0.75;
+    if (f[0] === 1) {
+      // Nošena zastava: manja, iza glave nosača, platno se vije unatrag.
+      const r = roster.get(f[4]);
+      let yaw = 0;
+      if (r && r.av && r.av.root.visible) {
+        const a = r.av.root;
+        x = a.position.x;
+        y = a.position.y;
+        z = a.position.z;
+        yaw = a.rotation.y;
+      }
+      x += Math.sin(yaw) * 0.3;
+      z += Math.cos(yaw) * 0.3;
+      y += r && r.av && r.av.crouch ? 0.55 : 1.0;
+      v.group.scale.setScalar(0.6);
+      v.group.rotation.y = yaw - Math.PI / 2;
+    }
+    v.group.visible = v.marker.visible = true;
+    v.group.position.set(x, y, z);
+    v.marker.position.set(x, y + (f[0] === 1 ? 1.9 : 3.1), z);
+    v.marker.scale.set(ms, ms, 1);
+  }
+  if (!ctf) return;
+  const k = t * 0.006;
+  for (let i = 0; i < clothPos.count; i++) clothPos.setZ(i, Math.sin(k - clothU[i] * 5) * 0.12 * clothU[i]);
+  clothPos.needsUpdate = true;
+}
+
 /* ================================================================ zvuk (sve se generira, nema datoteka) */
 
 const sfx = (() => {
@@ -722,6 +832,12 @@ let cheats = {};
 let lostReason = '';
 let shakeUntil = 0;
 let shakeAmp = 0;
+// Način igre sobe i timski rezultat. flagState: [[stanje, x, y, z, idNosača], ...] iz stanja sa servera (CTF).
+let mode = 'ffa';
+let teamScore = [0, 0];
+let scoreLimit = 0;
+let flagState = null;
+me.team = null;
 const RAPID_COOLDOWN = 150; // ms, mora odgovarati serveru
 const cooldownMs = () => (cheats.rapid ? RAPID_COOLDOWN : W.cooldown * 1000);
 
@@ -733,7 +849,100 @@ function addRoster(p) {
   roster.set(p.id, {
     id: p.id, name: p.name, hue: p.hue, kills: p.kills || 0, deaths: p.deaths || 0, bot: !!p.bot,
     skin: SKINS.includes(p.skin) ? p.skin : 'klasik', alive: false, snaps: [], av: null,
+    team: p.team === 0 || p.team === 1 ? p.team : null,
   });
+}
+
+/* ================================================================ timovi */
+
+// Tekst na tamnoj podlozi: malo svjetlije od boja timova.
+const TEAM_TEXT = ['#ff6d60', '#6aa4ff'];
+const TEAM_ACC = ['crvenu', 'plavu'];   // "uzima plavu zastavu"
+const TEAM_NOM = ['Crvena', 'Plava'];   // "Plava zastava vraćena"
+const TEAM_PL = ['Crvene', 'Plave'];    // "prelazi u Plave"
+
+const teamMode = () => mode === 'tdm' || mode === 'ctf';
+const hasTeam = (r) => teamMode() && r && (r.team === 0 || r.team === 1);
+
+// Lik se mora ponovno složiti kad igrač promijeni tim ili soba način (druga boja).
+function resetAvatar(r) {
+  if (!r.av) return;
+  disposeAvatar(r.av);
+  r.av = null;
+}
+
+function updateRoomInfo() {
+  $('roomInfo').textContent = `Soba: ${roomCode} · ${MODE_NAMES[mode] || ''} · igrača: ${roster.size}`;
+  const btn = $('teamBtn');
+  btn.hidden = !teamMode() || me.team === null;
+  if (!btn.hidden) btn.textContent = `Promijeni tim (sada: ${TEAMS[me.team].name})`;
+  if ([...$('adminMode').options].some((o) => o.value === mode)) $('adminMode').value = mode;
+}
+
+function onMode(m) {
+  mode = MODES.includes(m.mode) ? m.mode : 'ffa';
+  scoreLimit = m.lim || 0;
+  teamScore = [0, 0];
+  flagState = null;
+  for (const p of m.players) {
+    const r = roster.get(p.id);
+    if (!r) continue;
+    r.team = p.team === 0 || p.team === 1 ? p.team : null;
+    resetAvatar(r);
+  }
+  me.team = roster.get(me.id)?.team ?? null;
+  centerMsg(`${MODE_NAMES[mode]}${me.team !== null ? ` · tvoj tim: ${TEAMS[me.team].name}` : ''}`, 3500);
+  feedSystem(`Način igre: ${MODE_NAMES[mode]}`);
+  updateRoomInfo();
+}
+
+function onTeam(m) {
+  if (m.err) {
+    centerMsg(m.err, 2500);
+    return;
+  }
+  const r = roster.get(m.id);
+  if (!r) return;
+  r.team = m.team;
+  resetAvatar(r);
+  if (m.id === me.id) {
+    me.team = m.team;
+    centerMsg(`Sada si u timu: ${TEAMS[m.team].name}`, 2500);
+    updateRoomInfo();
+  } else {
+    feedSystem(`${r.name} prelazi u ${TEAM_PL[m.team]}`);
+  }
+}
+
+// Događaji sa zastavama: e = take | drop | ret | cap, f = čija je zastava, id = igrač (0 = sama se vratila).
+function onFlag(m) {
+  const r = roster.get(m.id);
+  const name = r ? r.name : '?';
+  const row = feedRow(m.id === me.id ? 'mine flag' : 'flag');
+  const flagSpan = (text) => span(text, TEAM_TEXT[m.f]);
+  if (m.e === 'take') {
+    row.append(span(name, playerColor(r)), span(' uzima '), flagSpan(`${TEAM_ACC[m.f]} zastavu`));
+    if (m.id === me.id) centerMsg('IMAŠ ZASTAVU! Nosi je do svog postolja', 3000);
+    else if (m.f === me.team) centerMsg('Uzeli su vam zastavu!', 2000);
+  } else if (m.e === 'drop') {
+    row.append(span(name, playerColor(r)), span(' ispušta '), flagSpan(`${TEAM_ACC[m.f]} zastavu`));
+  } else if (m.e === 'ret') {
+    if (m.id) row.append(span(name, playerColor(r)), span(' vraća '), flagSpan(`${TEAM_ACC[m.f]} zastavu`));
+    else row.append(flagSpan(`${TEAM_NOM[m.f]} zastava vraćena`));
+  } else if (m.e === 'cap') {
+    const team = 1 - m.f;
+    row.append(span(`${TEAMS[team].name} su osvojili zastavu!`, TEAM_TEXT[team]));
+    centerMsg(team === me.team ? 'OSVOJILI STE ZASTAVU!' : `${TEAMS[team].name} su osvojili zastavu`, 2500);
+    if (team === me.team) sfx.kill();
+  }
+}
+
+function flagText(i) {
+  const f = flagState[i];
+  if (f[0] === 0) return 'u bazi';
+  if (f[0] === 2) return 'pala';
+  if (f[4] === me.id) return 'NOSIŠ JE TI';
+  return `NOSI je ${roster.get(f[4])?.name || '?'}`;
 }
 
 function removeRoster(id) {
@@ -744,7 +953,7 @@ function removeRoster(id) {
 
 /* ================================================================ mreža */
 
-function connect(name, room, bots, skin) {
+function connect(name, room, bots, skin, gameMode) {
   $('play').disabled = true;
   $('lobbyError').textContent = 'Spajanje… (ako server spava, prvi put može trajati do minute)';
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -757,7 +966,7 @@ function connect(name, room, bots, skin) {
   }, 60000);
   ws.onopen = () => {
     clearTimeout(timeout);
-    send({ t: 'join', name, room, bots, skin });
+    send({ t: 'join', name, room, bots, skin, mode: gameMode });
   };
   ws.onmessage = (e) => {
     let m;
@@ -819,9 +1028,13 @@ function handle(m) {
       break;
     }
     case 'end': onEnd(m); break;
+    case 'mode': onMode(m); break;
+    case 'team': onTeam(m); break;
+    case 'flag': onFlag(m); break;
     case 'reset':
       ended = false;
       endInfo = null;
+      teamScore = [0, 0];
       $('end').hidden = true;
       for (const r of roster.values()) { r.kills = 0; r.deaths = 0; }
       me.bananas = 0;
@@ -863,12 +1076,17 @@ function onWelcome(m) {
   timeLeft = m.tl;
   ended = m.state === 'end';
   roomCode = m.room;
+  mode = MODES.includes(m.mode) ? m.mode : 'ffa';
+  teamScore = m.teamScore || [0, 0];
+  scoreLimit = m.scoreLimit || 0;
+  me.team = m.team === 0 || m.team === 1 ? m.team : null;
   inGame = true;
   $('lobby').hidden = true;
   $('hud').hidden = false;
   destroyPreview();
   $('settingsPause').append($('settings'));
-  $('roomInfo').textContent = `Soba: ${roomCode} · igrača: ${roster.size}`;
+  updateRoomInfo();
+  if (me.team !== null) centerMsg(`${MODE_NAMES[mode]} · tvoj tim: ${TEAMS[me.team].name}`, 4000);
   $('pause').hidden = false;
   const savedKey = readAdminKey();
   if (savedKey) send({ t: 'alogin', key: savedKey });
@@ -917,6 +1135,8 @@ function onSnap(m) {
     }
   }
   timeLeft = m.tl;
+  if (m.ts) teamScore = m.ts;
+  flagState = m.fl || null;
   syncFlyingBananas(m.b || []);
 }
 
@@ -988,7 +1208,12 @@ function onEnd(m) {
     if (r) { r.kills = row.kills; r.deaths = row.deaths; }
   }
   endInfo = { until: performance.now() + m.next * 1000, winner: m.board[0] };
-  renderBoard($('end'), m.board[0] ? `Pobjednik: ${m.board[0].name}` : 'Kraj runde');
+  if (m.ts) teamScore = m.ts;
+  let title = m.board[0] ? `Pobjednik: ${m.board[0].name}` : 'Kraj runde';
+  if (m.win === 0 || m.win === 1) title = `Pobjeda: ${TEAMS[m.win].name}!`;
+  else if (m.win === -1) title = 'Neriješeno!';
+  renderBoard($('end'), title);
+  if (m.win === 0 || m.win === 1) $('end').querySelector('h3').style.color = TEAM_TEXT[m.win];
   const next = document.createElement('div');
   next.className = 'next';
   next.id = 'endNext';
@@ -1016,6 +1241,7 @@ function span(text, color) {
 }
 
 function playerColor(r) {
+  if (hasTeam(r)) return TEAM_TEXT[r.team];
   return r ? `hsl(${r.hue} 70% 65%)` : '#fff';
 }
 
@@ -1039,7 +1265,7 @@ function centerMsg(text, ms) {
 }
 
 function renderBoard(el, title) {
-  const rows = [...roster.values()].sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
+  const sorted = [...roster.values()].sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
   el.replaceChildren();
   const h = document.createElement('h3');
   h.textContent = title;
@@ -1052,6 +1278,24 @@ function renderBoard(el, title) {
     head.append(th);
   }
   table.append(head);
+  // U timskim načinima: prvo crveni, pa plavi, svaki tim sa svojim zaglavljem i rezultatom.
+  const groups = teamMode() ? [0, 1].map((tm) => sorted.filter((r) => r.team === tm)) : [sorted];
+  groups.forEach((rows, tm) => {
+    if (teamMode()) {
+      const tr = document.createElement('tr');
+      tr.className = `team-head t${tm}`;
+      const td = document.createElement('td');
+      td.colSpan = 4;
+      td.textContent = `${TEAMS[tm].name.toUpperCase()} · ${teamScore[tm]}${scoreLimit ? ` / ${scoreLimit}` : ''}`;
+      tr.append(td);
+      table.append(tr);
+    }
+    appendBoardRows(table, rows);
+  });
+  el.append(h, table);
+}
+
+function appendBoardRows(table, rows) {
   rows.forEach((r, i) => {
     const tr = document.createElement('tr');
     if (r.id === me.id) tr.className = 'me';
@@ -1066,11 +1310,11 @@ function renderBoard(el, title) {
         b.textContent = 'BOT';
         td.append(b);
       }
+      if (j === 1 && hasTeam(r)) td.style.color = TEAM_TEXT[r.team];
       tr.append(td);
     });
     table.append(tr);
   });
-  el.append(h, table);
 }
 
 /* ================================================================ pucanje */
@@ -1202,7 +1446,9 @@ function updateOthers(t) {
       continue;
     }
     if (!r.av) {
-      r.av = makeAvatar(r.hue, r.name, r.skin);
+      r.av = hasTeam(r)
+        ? makeAvatar(TEAMS[r.team].hue, r.name, r.skin, true, TEAM_TEXT[r.team])
+        : makeAvatar(r.hue, r.name, r.skin);
       setWallhack(r.av, !!cheats.wall);
       scene.add(r.av.root);
     }
@@ -1285,6 +1531,30 @@ function setClass(id, cls, on) {
   hudCache.set(key, on);
   $(id).classList.toggle(cls, on);
 }
+function setHidden(id, hidden) {
+  const key = `${id}.hidden`;
+  if (hudCache.get(key) === hidden) return;
+  hudCache.set(key, hidden);
+  $(id).hidden = hidden;
+}
+
+// Gore u sredini: "CRVENI 12 : 9 PLAVI" i (u CTF-u) gdje su zastave.
+function teamHud() {
+  const teams = teamMode();
+  setHidden('teamScore', !teams);
+  if (teams) {
+    setText('tsRed', `CRVENI ${teamScore[0]}`);
+    setText('tsBlue', `${teamScore[1]} PLAVI`);
+  }
+  const flags = mode === 'ctf' && !!flagState && me.team !== null;
+  setHidden('flagHud', !flags);
+  if (flags) {
+    setText('flagMine', `Tvoja zastava: ${flagText(me.team)}`);
+    setText('flagTheirs', `Njihova: ${flagText(1 - me.team)}`);
+    setStyle('flagMine', 'color', TEAM_TEXT[me.team]);
+    setStyle('flagTheirs', 'color', TEAM_TEXT[1 - me.team]);
+  }
+}
 
 let fps = 0, fpsFrames = 0, fpsStart = 0;
 
@@ -1302,6 +1572,7 @@ function hud(t) {
   const tl = Math.max(0, timeLeft);
   setText('timer', ended ? 'KRAJ' : `${Math.floor(tl / 60)}:${String(tl % 60).padStart(2, '0')}`);
   setText('net', `${isAdmin ? 'ADMIN · ' : ''}${fps} FPS · ping ${Math.round(rtt)} ms`);
+  teamHud();
 
   const scopeOn = me.scoped && camera.fov < 45;
   setClass('scope', 'on', scopeOn);
@@ -1351,6 +1622,7 @@ function frame(t) {
     updateOthers(t);
     updateFx(dt);
     updateBananaFx(dt);
+    updateFlags(t);
     updateViewmodel(t, dt);
     net(t);
     hud(t);
@@ -1396,7 +1668,7 @@ document.addEventListener('pointerlockchange', () => {
     input.keys.clear();
     input.rmb = false;
     $('board').hidden = true;
-    $('roomInfo').textContent = `Soba: ${roomCode} · igrača: ${roster.size}`;
+    updateRoomInfo();
   }
 });
 document.addEventListener('pointerlockerror', () => {
@@ -1538,6 +1810,7 @@ function initLobby() {
   $('name').value = settings.name;
   $('room').value = params.get('soba') || settings.room;
   $('bots').value = String(settings.bots);
+  $('mode').value = MODES.includes(settings.mode) ? settings.mode : 'ffa';
   $('skin').value = SKINS.includes(settings.skin) ? settings.skin : 'klasik';
   $('skin').addEventListener('change', () => {
     settings.skin = $('skin').value;
@@ -1553,15 +1826,16 @@ function initLobby() {
     const room = $('room').value.trim() || 'razred';
     const bots = Number($('bots').value) || 0;
     const skin = $('skin').value;
+    const gameMode = $('mode').value;
     if (!name) {
       $('lobbyError').textContent = 'Upiši ime.';
       $('name').focus();
       return;
     }
-    Object.assign(settings, { name, room, bots, skin });
+    Object.assign(settings, { name, room, bots, skin, mode: gameMode });
     saveSettings();
     sfx.init();
-    connect(name, room, bots, skin);
+    connect(name, room, bots, skin, gameMode);
   };
   $('play').addEventListener('click', start);
   for (const id of ['name', 'room']) {
@@ -1587,6 +1861,7 @@ function initLobby() {
     location.reload();
   });
   $('reconnect').addEventListener('click', () => location.reload());
+  $('teamBtn').addEventListener('click', () => send({ t: 'team' }));
 }
 /* ================================================================ admin panel */
 
@@ -1674,6 +1949,7 @@ function initAdmin() {
     btn.addEventListener('click', () => send({ t: 'admin', a: btn.dataset.act }));
   }
   $('adminBots').addEventListener('change', () => send({ t: 'admin', a: 'bots', n: Number($('adminBots').value) }));
+  $('adminMode').addEventListener('change', () => send({ t: 'admin', a: 'mode', mode: $('adminMode').value }));
   const say = () => {
     const text = $('adminSay').value.trim();
     if (!text) return;
