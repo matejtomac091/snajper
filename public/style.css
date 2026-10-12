@@ -245,6 +245,13 @@ label.check input { display: inline-block; width: 16px; height: 16px; margin: 0;
 #adminPlayers { display: flex; flex-direction: column; gap: 4px; }
 .admin-player { display: flex; justify-content: space-between; align-items: center; font-size: 13px; padding: 4px 0; border-top: 1px solid var(--line); }
 .admin-player button { width: auto; margin: 0; padding: 4px 10px; font-size: 12px; letter-spacing: 0; color: var(--text); background: rgba(255, 90, 79, 0.25); }
+.admin-player { gap: 6px; }
+.admin-player .who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.admin-player button.team-pick { background: rgba(255, 255, 255, 0.07); border: 1px solid var(--line); }
+.admin-player button.team-pick.t0.on { background: rgba(224, 71, 58, 0.35); border-color: #e0473a; }
+.admin-player button.team-pick.t1.on { background: rgba(58, 123, 224, 0.35); border-color: #3a7be0; }
+.admin-player button.team-pick:disabled { cursor: default; opacity: 1; }
+.feed-row .ns { color: #5ff2ff; font-weight: 800; }
 #adminMsg:empty { display: none; }
 
 /* ---------- skinovi i eksplozivni pištolj ---------- */

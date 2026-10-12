@@ -157,6 +157,7 @@ class Room {
     // Slajdanje bira onaj tko otvori sobu (admin ga može mijenjati). Fizika se vrti u pregledniku,
     // pa server ovo ne može potpuno provesti; slajd ionako ne daje više od brzine trčanja.
     this.allowSlide = allowSlide;
+    this.teamsLocked = false; // admin može zabraniti igračima da sami mijenjaju tim
   }
 
   humans() {
@@ -303,6 +304,10 @@ function setTeam(room, p, team, t) {
 function onTeamSwitch(room, p, t) {
   if (!isTeamMode(room) || p.team === null) return;
   const refuse = (err) => send(p, { t: 'team', id: p.id, team: p.team, err });
+  if (room.teamsLocked) {
+    refuse('Admin je zaključao timove.');
+    return;
+  }
   if (t - p.teamSwitchAt < TEAM_SWITCH_GAP) {
     refuse('Pričekaj malo prije nove promjene tima.');
     return;
@@ -321,6 +326,26 @@ function onTeamSwitch(room, p, t) {
   p.teamSwitchAt = t;
   setTeam(room, p, to, t);
   if (swap) setTeam(room, swap, from, t);
+}
+
+// Admin: nasumično izmiješa ljude u timove, pa botovima popuni razliku (timovi ostanu ravnopravni).
+function shuffleTeams(room, t) {
+  const all = [...room.players.values()];
+  const humans = all.filter((p) => !p.bot);
+  for (let i = humans.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [humans[i], humans[j]] = [humans[j], humans[i]];
+  }
+  const order = [...humans, ...all.filter((p) => p.bot)];
+  const start = Math.random() < 0.5 ? 0 : 1;
+  order.forEach((p, i) => {
+    const team = (start + i) % 2;
+    if (p.team !== team) setTeam(room, p, team, t);
+  });
+}
+
+function sendRules(room) {
+  room.broadcast({ t: 'rules', slide: room.allowSlide, locked: room.teamsLocked });
 }
 
 /* ------------------------------------------------------------------ zastave (CTF) */
@@ -1089,7 +1114,21 @@ function onAdmin(room, p, m) {
       break;
     case 'slide':
       room.allowSlide = !!m.on;
-      room.broadcast({ t: 'rules', slide: room.allowSlide });
+      sendRules(room);
+      break;
+    case 'setteam': {
+      const target = room.players.get(Math.floor(+m.id));
+      const team = Math.floor(+m.team);
+      if (!isTeamMode(room) || !target || (team !== 0 && team !== 1) || target.team === team) return;
+      setTeam(room, target, team, t);
+      break;
+    }
+    case 'shuffle':
+      if (isTeamMode(room)) shuffleTeams(room, t);
+      break;
+    case 'lockteams':
+      room.teamsLocked = !!m.on;
+      sendRules(room);
       break;
     case 'mode':
       if (MODES.includes(m.mode) && m.mode !== room.mode) setMode(room, m.mode, t);
@@ -1159,7 +1198,7 @@ wss.on('connection', (ws) => {
         t: 'welcome', id: player.id, room: code, state: room.state,
         tl: Math.ceil(room.timeLeft), players: roster(room),
         mode: room.mode, team: player.team, teamScore: room.teamScore, scoreLimit: scoreLimit(room),
-        slide: room.allowSlide,
+        slide: room.allowSlide, locked: room.teamsLocked,
       });
       room.broadcast({
         t: 'join', id: player.id, name: player.name, hue: player.hue, bot: false, skin: player.skin, team: player.team,

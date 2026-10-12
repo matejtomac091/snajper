@@ -1025,7 +1025,11 @@ function updateRoomInfo() {
   if ($('adminSlide')) $('adminSlide').checked = roomSlide;
   const btn = $('teamBtn');
   btn.hidden = !teamMode() || me.team === null;
-  if (!btn.hidden) btn.textContent = `Promijeni tim (sada: ${TEAMS[me.team].name})`;
+  btn.disabled = teamsLocked;
+  if (!btn.hidden) btn.textContent = teamsLocked ? `Timovi su zaključani (ti si: ${TEAMS[me.team].name})` : `Promijeni tim (sada: ${TEAMS[me.team].name})`;
+  if ($('adminTeams')) $('adminTeams').hidden = !teamMode();
+  if ($('adminLockTeams')) $('adminLockTeams').checked = teamsLocked;
+  renderAdminPlayers();
   if ([...$('adminMode').options].some((o) => o.value === mode)) $('adminMode').value = mode;
 }
 
@@ -1062,6 +1066,7 @@ function onTeam(m) {
   } else {
     feedSystem(`${r.name} prelazi u ${TEAM_PL[m.team]}`);
   }
+  renderAdminPlayers();
 }
 
 // Događaji sa zastavama: e = take | drop | ret | cap, f = čija je zastava, id = igrač (0 = sama se vratila).
@@ -1200,8 +1205,10 @@ function handle(m) {
       break;
     case 'admin': onAdminState(m); break;
     case 'rules':
+      if (roomSlide !== !!m.slide) feedSystem(`Slajdanje je sada ${m.slide ? 'dopušteno' : 'zabranjeno'}`);
+      if (teamsLocked !== !!m.locked) feedSystem(m.locked ? 'Admin je zaključao timove' : 'Timovi su otključani');
       roomSlide = !!m.slide;
-      feedSystem(`Slajdanje je sada ${roomSlide ? 'dopušteno' : 'zabranjeno'}`);
+      teamsLocked = !!m.locked;
       updateRoomInfo();
       break;
     case 'pistol': me.pistolAmmo = m.n; break;
@@ -1236,6 +1243,7 @@ function onWelcome(m) {
   roomCode = m.room;
   mode = MODES.includes(m.mode) ? m.mode : 'ffa';
   roomSlide = m.slide !== false;
+  teamsLocked = !!m.locked;
   teamScore = m.teamScore || [0, 0];
   scoreLimit = m.scoreLimit || 0;
   me.team = m.team === 0 || m.team === 1 ? m.team : null;
@@ -1844,6 +1852,7 @@ let camStep = 0;
 let slideK = 0;
 let wasSliding = false;
 let roomSlide = true;
+let teamsLocked = false;
 let sprintK = 0;
 let hudDt = 0.016;
 
@@ -2378,10 +2387,25 @@ function renderAdminPlayers() {
   list.replaceChildren();
   const botCount = [...roster.values()].filter((r) => r.bot).length;
   if ([...$('adminBots').options].some((o) => Number(o.value) === botCount)) $('adminBots').value = String(botCount);
-  for (const r of roster.values()) {
+  const players = [...roster.values()].sort((a, b) => (a.team ?? 0) - (b.team ?? 0));
+  for (const r of players) {
     const row = document.createElement('div');
     row.className = 'admin-player';
-    row.append(span(`${r.name}${r.bot ? ' (bot)' : ''}${r.id === me.id ? ' (ti)' : ''}`));
+    const label = span(`${r.name}${r.bot ? ' (bot)' : ''}${r.id === me.id ? ' (ti)' : ''}`, hasTeam(r) ? TEAM_TEXT[r.team] : undefined);
+    label.className = 'who';
+    row.append(label);
+    if (teamMode() && hasTeam(r)) {
+      // Admin ručno slaže timove: klik na drugi tim prebacuje igrača odmah.
+      for (const team of [0, 1]) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = `team-pick t${team}${r.team === team ? ' on' : ''}`;
+        b.textContent = TEAMS[team].name;
+        b.disabled = r.team === team;
+        b.addEventListener('click', () => send({ t: 'admin', a: 'setteam', id: r.id, team }));
+        row.append(b);
+      }
+    }
     if (r.id !== me.id) {
       const kick = document.createElement('button');
       kick.type = 'button';
@@ -2418,6 +2442,8 @@ function initAdmin() {
   }
   $('adminBots').addEventListener('change', () => send({ t: 'admin', a: 'bots', n: Number($('adminBots').value) }));
   $('adminMode').addEventListener('change', () => send({ t: 'admin', a: 'mode', mode: $('adminMode').value }));
+  $('adminSlide').addEventListener('change', () => send({ t: 'admin', a: 'slide', on: $('adminSlide').checked }));
+  $('adminLockTeams').addEventListener('change', () => send({ t: 'admin', a: 'lockteams', on: $('adminLockTeams').checked }));
   const say = () => {
     const text = $('adminSay').value.trim();
     if (!text) return;

@@ -188,6 +188,15 @@
             <button class="ghost small" type="button" data-act="restart">Nova runda</button>
             <button class="ghost small" type="button" data-act="end">Završi rundu</button>
           </div>
+          <label class="check"><input type="checkbox" id="adminSlide"> Slajdanje dopušteno u sobi</label>
+          <div id="adminTeams" hidden>
+            <div class="admin-title">Timovi</div>
+            <div class="admin-row">
+              <button class="ghost small" type="button" data-act="shuffle">Promiješaj timove</button>
+              <label class="check"><input type="checkbox" id="adminLockTeams"> Zaključaj timove</label>
+            </div>
+            <p class="hint">Igrače prebacuješ gumbima Crveni / Plavi na popisu igrača ispod.</p>
+          </div>
           <label>Način igre (kreće nova runda)
             <select id="adminMode">
               <option value="ffa">Svi protiv svih</option>
