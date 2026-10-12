@@ -24,7 +24,7 @@ const angDiff = (a, b) => wrap(b - a);
 // blood: krv je isključena dok je netko ne uključi (školska igra). gfx: 'low' | 'high' | 'ultra'.
 const DEFAULTS = {
   name: '', room: 'razred', bots: 0, sens: 1, quality: 0.5, volume: 0.7, skin: 'klasik', blood: false, gfx: 'low', mode: 'ffa',
-  fullscreen: true,
+  fullscreen: true, slide: true,
 };
 const settings = (() => {
   try {
@@ -1917,8 +1917,14 @@ function hud(t) {
 /* ================================================================ glavna petlja */
 
 let lastFrame = performance.now();
+let lobbyFrameAt = 0;
 function frame(t) {
   requestAnimationFrame(frame);
+  // Izbornik se crta najviše 30 puta u sekundi: pozadina se ionako sporo vrti, a slab laptop se ne grije.
+  if (!inGame) {
+    if (t - lobbyFrameAt < 32) return;
+    lobbyFrameAt = t;
+  }
   const dt = Math.min(0.1, (t - lastFrame) / 1000);
   lastFrame = t;
   fpsFrames++;
@@ -2082,6 +2088,12 @@ window.addEventListener('resize', () => {
   camera.aspect = gunCam.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   gunCam.updateProjectionMatrix();
+  if (preview?.box) {
+    const w = Math.max(120, preview.box.clientWidth), h = Math.max(150, preview.box.clientHeight);
+    preview.r.setSize(w, h);
+    preview.cam.aspect = w / h;
+    preview.cam.updateProjectionMatrix();
+  }
 });
 
 /* ================================================================ izbornik */
@@ -2093,17 +2105,18 @@ function initPreview() {
   try {
     const r = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     r.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    r.setSize(120, 150);
+    const w = Math.max(120, box.clientWidth || 120), h = Math.max(150, box.clientHeight || 150);
+    r.setSize(w, h);
     box.append(r.domElement);
     const sc = new THREE.Scene();
     sc.add(new THREE.HemisphereLight(0xffffff, 0x555555, 2.2));
     const light = new THREE.DirectionalLight(0xffffff, 1.6);
     light.position.set(2, 3, 2);
     sc.add(light);
-    const cam = new THREE.PerspectiveCamera(32, 120 / 150, 0.1, 20);
-    cam.position.set(0, 1.15, 4.3);
+    const cam = new THREE.PerspectiveCamera(30, w / h, 0.1, 20);
+    cam.position.set(0, 1.15, 4.6);
     cam.lookAt(0, 0.98, 0);
-    preview = { r, sc, cam, av: null };
+    preview = { r, sc, cam, av: null, box };
     setPreviewSkin(settings.skin);
   } catch {
     box.hidden = true;
@@ -2191,7 +2204,8 @@ function rememberLobbyFields() {
   if (name) settings.name = name;
   settings.room = $('room').value.trim() || settings.room;
   settings.bots = Number($('bots').value) || 0;
-  settings.mode = $('mode').value;
+  settings.mode = chosenMode;
+  settings.slide = chosenSlide;
   settings.skin = $('skin').value;
   saveSettings();
 }
@@ -2217,6 +2231,60 @@ const playersWord = (n) => (isOne(n) ? 'igrač' : 'igrača');
 const botsWord = (n) => (isOne(n) ? 'bot' : isFew(n) ? 'bota' : 'botova');
 let lobbyRooms = [];
 let chosenMode = 'ffa';
+let chosenSlide = true;
+
+// Segmentirani gumbi: skriveni <select> ostaje izvor istine (vrijednost i zaključanost), gumbi ga samo prikazuju.
+function buildSegs() {
+  for (const seg of document.querySelectorAll('.seg[data-for]')) {
+    const select = $(seg.dataset.for);
+    seg.replaceChildren();
+    for (const opt of select.options) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.dataset.value = opt.value;
+      b.append(opt.textContent);
+      if (opt.dataset.desc) {
+        const small = document.createElement('small');
+        small.textContent = opt.dataset.desc;
+        b.append(small);
+      }
+      b.addEventListener('click', () => {
+        if (select.disabled || select.value === opt.value) return;
+        select.value = opt.value;
+        select.dispatchEvent(new Event('change'));
+        syncSegs();
+      });
+      seg.append(b);
+    }
+  }
+  syncSegs();
+}
+
+function syncSegs() {
+  for (const seg of document.querySelectorAll('.seg[data-for]')) {
+    const select = $(seg.dataset.for);
+    for (const b of seg.children) {
+      b.classList.toggle('on', b.dataset.value === select.value);
+      b.disabled = select.disabled;
+    }
+  }
+}
+
+function initModals() {
+  for (const btn of document.querySelectorAll('[data-open]')) {
+    btn.addEventListener('click', () => {
+      $(btn.dataset.open).hidden = false;
+    });
+  }
+  for (const modal of document.querySelectorAll('.modal')) {
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal || e.target.closest('[data-close]')) modal.hidden = true;
+    });
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') for (const modal of document.querySelectorAll('.modal')) modal.hidden = true;
+  });
+}
 
 async function refreshRooms() {
   if (inGame) return;
@@ -2240,21 +2308,25 @@ function renderRoomStatus() {
   };
   if (room) {
     $('mode').value = room.mode;
-    $('mode').disabled = true;
-    $('bots').disabled = true;
+    $('slide').value = room.slide === false ? '0' : '1';
+    for (const id of ['mode', 'bots', 'slide']) $(id).disabled = true;
     status.replaceChildren(
       'Soba ', strong(code), ' već igra ', strong(MODE_NAMES[room.mode]),
-      ` (${room.players} ${playersWord(room.players)}${room.bots ? ` i ${room.bots} ${botsWord(room.bots)}` : ''}). `,
-      'Ulaziš u taj način, a sljedeći se bira glasanjem na kraju runde.',
+      ` (${room.players} ${playersWord(room.players)}${room.bots ? ` i ${room.bots} ${botsWord(room.bots)}` : ''}`,
+      `, slajdanje ${room.slide === false ? 'zabranjeno' : 'dopušteno'}). `,
+      'Ulaziš u taj način; sljedeći se bira glasanjem na kraju runde.',
     );
   } else {
-    $('mode').disabled = false;
-    $('bots').disabled = false;
+    for (const id of ['mode', 'bots', 'slide']) $(id).disabled = false;
     $('mode').value = chosenMode;
+    $('slide').value = chosenSlide ? '1' : '0';
     status.replaceChildren(
-      'Nova soba ', strong(code), ': ti biraš način igre i botove. Na kraju svake runde igrači glasaju za sljedeći način.',
+      'Nova soba ', strong(code), ': ti biraš način igre, botove i slajdanje. Na kraju runde igrači glasaju za sljedeći način.',
     );
   }
+  status.classList.toggle('existing', !!room);
+  document.querySelector('.rules')?.classList.toggle('locked', !!room);
+  syncSegs();
   const list = $('roomList');
   list.replaceChildren();
   for (const r of lobbyRooms.slice(0, 8)) {
@@ -2284,6 +2356,13 @@ function initLobby() {
   $('mode').addEventListener('change', () => {
     if (!$('mode').disabled) chosenMode = $('mode').value;
   });
+  chosenSlide = settings.slide !== false;
+  $('slide').value = chosenSlide ? '1' : '0';
+  $('slide').addEventListener('change', () => {
+    if (!$('slide').disabled) chosenSlide = $('slide').value === '1';
+  });
+  buildSegs();
+  initModals();
   $('room').addEventListener('input', renderRoomStatus);
   refreshRooms();
   const roomTimer = setInterval(() => (inGame ? clearInterval(roomTimer) : refreshRooms()), 5000);
@@ -2303,15 +2382,16 @@ function initLobby() {
     const bots = Number($('bots').value) || 0;
     const skin = $('skin').value;
     const gameMode = $('mode').disabled ? chosenMode : $('mode').value;
+    const slide = $('slide').disabled ? chosenSlide : $('slide').value === '1';
     if (!name) {
       $('lobbyError').textContent = 'Upiši ime.';
       $('name').focus();
       return;
     }
-    Object.assign(settings, { name, room, bots, skin, mode: gameMode });
+    Object.assign(settings, { name, room, bots, skin, mode: gameMode, slide });
     saveSettings();
     sfx.init();
-    connect(name, room, bots, skin, gameMode);
+    connect(name, room, bots, skin, gameMode, slide);
   };
   $('play').addEventListener('click', start);
   if (takeAutojoin() && $('name').value.trim()) start();

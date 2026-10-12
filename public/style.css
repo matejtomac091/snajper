@@ -306,3 +306,129 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 .card tr.team-head td { padding-top: 12px; font-size: 13px; font-weight: 900; letter-spacing: 1px; border-top: none; }
 .card tr.team-head.t0 td { color: #ff6d60; }
 .card tr.team-head.t1 td { color: #6aa4ff; }
+
+/* ================================================================ glavni izbornik */
+/* Bez blur efekata i teških sjena: mora ostati brz na školskim laptopima. */
+#lobby.lobby {
+  align-items: flex-start;
+  overflow-y: auto;
+  padding: 28px 16px;
+  background:
+    linear-gradient(180deg, rgba(6, 8, 12, 0.35) 0%, rgba(6, 8, 12, 0.15) 35%, rgba(6, 8, 12, 0.8) 100%),
+    radial-gradient(ellipse at 50% 40%, transparent 0%, rgba(4, 6, 10, 0.55) 75%);
+}
+.lobby-shell { width: min(980px, 100%); margin: auto; display: flex; flex-direction: column; gap: 18px; animation: rise 0.35s ease-out both; }
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .lobby-shell { animation: none; } }
+
+.brand { display: flex; align-items: center; gap: 14px; padding: 0 4px; }
+.brand-mark { width: 46px; height: 46px; color: var(--accent); flex: none; }
+.brand h1 { font-size: 40px; letter-spacing: 9px; text-shadow: 0 2px 18px rgba(0, 0, 0, 0.45); }
+.brand .sub { margin: 4px 0 0; font-size: 14px; color: #c5ccd8; }
+
+.lobby-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.lcard {
+  background: rgba(13, 16, 23, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  padding: 20px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+}
+
+.field { display: block; margin: 0 0 14px; min-width: 0; }
+.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.field-label {
+  display: block; margin-bottom: 7px;
+  font-size: 11px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; color: var(--muted);
+}
+.field input { margin-top: 0; height: 44px; }
+
+.status {
+  position: relative; margin: -2px 0 16px; padding: 10px 12px 10px 28px;
+  font-size: 13px; line-height: 1.45; color: #c5ccd8;
+  background: rgba(255, 255, 255, 0.04); border: 1px solid var(--line); border-radius: 10px;
+}
+.status::before {
+  content: ""; position: absolute; left: 12px; top: 15px; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent);
+}
+.status.existing::before { background: var(--ok); }
+.status b { color: var(--text); }
+#roomList { margin: -4px 0 12px; }
+
+.rules { padding-top: 4px; }
+.rules.locked .field-label::after { content: " · bira vlasnik sobe"; text-transform: none; letter-spacing: 0; font-weight: 500; }
+
+/* segmentirani gumbi (umjesto padajućih izbornika) */
+.seg { display: flex; flex-wrap: wrap; gap: 6px; }
+.seg button {
+  flex: 1 1 0; min-width: 0; margin: 0; padding: 10px 8px;
+  font-size: 14px; font-weight: 700; letter-spacing: 0;
+  color: var(--text); background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.09); border-radius: 10px;
+  transition: background-color 0.12s, border-color 0.12s;
+}
+.seg button:hover { filter: none; background: rgba(255, 255, 255, 0.09); }
+.seg button.on { color: #1b1500; background: var(--accent); border-color: var(--accent); }
+.seg button:disabled { cursor: not-allowed; opacity: 0.45; }
+.seg button.on:disabled { opacity: 0.8; }
+.seg-mode { display: grid; grid-template-columns: repeat(3, 1fr); }
+.seg-mode button { padding: 12px 10px; text-align: left; line-height: 1.25; }
+.seg-mode small { display: block; margin-top: 3px; font-size: 12px; font-weight: 500; opacity: 0.75; }
+.seg-skin { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 12px; }
+.seg-skin button { padding: 9px 6px; font-size: 13px; }
+
+.play-btn {
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  margin-top: 6px; padding: 15px; font-size: 19px; letter-spacing: 4px; border-radius: 12px;
+}
+.play-btn kbd {
+  font: inherit; font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+  padding: 2px 6px; border-radius: 5px; background: rgba(0, 0, 0, 0.14); color: #3a2e00;
+}
+
+.card-skin { display: flex; flex-direction: column; }
+#skinPreview {
+  flex: none; width: 100%; height: 260px; margin: 0;
+  border-radius: 12px; border: 1px solid var(--line);
+  background: radial-gradient(ellipse at 50% 70%, rgba(255, 203, 71, 0.16), transparent 65%), rgba(255, 255, 255, 0.02);
+}
+.card-skin .hint { margin: 12px 0 0; }
+
+.lobby-foot { display: flex; align-items: center; gap: 8px; padding: 0 4px; }
+.link-btn {
+  width: auto; margin: 0; padding: 8px 14px; font-size: 13px; font-weight: 600; letter-spacing: 0;
+  color: var(--text); background: rgba(13, 16, 23, 0.85); border: 1px solid var(--line); border-radius: 999px;
+}
+.link-btn:hover { filter: none; border-color: rgba(255, 255, 255, 0.25); }
+.foot-note { margin-left: auto; font-size: 12px; color: #aab3c2; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6); }
+
+/* prozorčić za postavke i kontrole */
+.modal {
+  position: fixed; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center;
+  padding: 16px; background: rgba(4, 6, 10, 0.7);
+}
+.modal[hidden] { display: none; }
+.modal-card {
+  width: min(460px, 100%); max-height: calc(100vh - 32px); overflow: auto;
+  padding: 20px; background: #10141c; border: 1px solid var(--line); border-radius: 16px;
+}
+.modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.modal-head h2 { margin: 0; font-size: 20px; }
+.modal-x {
+  width: 34px; height: 34px; margin: 0; padding: 0; font-size: 16px; letter-spacing: 0;
+  color: var(--text); background: rgba(255, 255, 255, 0.06); border-radius: 8px;
+}
+.modal .settings { margin-top: 6px; border-top: none; }
+.modal .controls { margin-top: 12px; }
+
+@media (max-width: 860px) {
+  .lobby-grid { grid-template-columns: 1fr; }
+  #skinPreview { height: 200px; }
+  .brand h1 { font-size: 32px; letter-spacing: 6px; }
+}
+@media (max-width: 520px) {
+  .field-row { grid-template-columns: 1fr; gap: 0; }
+  .seg-mode { grid-template-columns: 1fr; }
+  .foot-note { display: none; }
+}

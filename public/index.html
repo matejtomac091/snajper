@@ -8,35 +8,71 @@
   <script type="importmap">{ "imports": { "three": "/three/three.module.js", "three/addons/": "/three-addons/" } }</script>
 </head>
 <body>
-  <div id="lobby" class="overlay">
-    <div class="panel">
-      <h1>SNAJPER</h1>
-      <p class="sub">Multiplayer za razred</p>
-      <label>Ime<input id="name" maxlength="16" autocomplete="off" spellcheck="false" placeholder="npr. Matej"></label>
-      <label>Soba<input id="room" maxlength="12" autocomplete="off" spellcheck="false" placeholder="razred"></label>
-      <div class="pair">
-        <label>Botovi za vježbu
-          <select id="bots">
-            <option value="0">Bez botova</option>
-            <option value="2">2 bota</option>
-            <option value="4">4 bota</option>
-            <option value="6">6 botova</option>
-            <option value="8">8 botova</option>
-          </select>
-        </label>
-        <label>Način igre
-          <select id="mode">
-            <option value="ffa">Svi protiv svih</option>
-            <option value="tdm">Timski deathmatch</option>
-            <option value="ctf">Zastava (CTF)</option>
-          </select>
-        </label>
-      </div>
-      <p id="roomStatus" class="hint">Botove i način igre bira onaj tko prvi otvori sobu. Botovi odlaze sami kako ulaze pravi igrači.</p>
-      <div id="roomList" hidden></div>
-      <div class="skin-row">
-        <label>Skin
-          <select id="skin">
+  <div id="lobby" class="overlay lobby">
+    <div class="lobby-shell">
+      <header class="brand">
+        <svg class="brand-mark" viewBox="0 0 48 48" aria-hidden="true">
+          <circle cx="24" cy="24" r="17" fill="none" stroke="currentColor" stroke-width="3"/>
+          <circle cx="24" cy="24" r="3" fill="currentColor"/>
+          <path d="M24 2v11M24 35v11M2 24h11M35 24h11" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+        </svg>
+        <div>
+          <h1>SNAJPER</h1>
+          <p class="sub">Multiplayer za razred, ravno u pregledniku</p>
+        </div>
+      </header>
+
+      <main class="lobby-grid">
+        <section class="lcard card-play">
+          <div class="field-row">
+            <label class="field"><span class="field-label">Ime</span>
+              <input id="name" maxlength="16" autocomplete="off" spellcheck="false" placeholder="npr. Matej"></label>
+            <label class="field"><span class="field-label">Soba</span>
+              <input id="room" maxlength="12" autocomplete="off" spellcheck="false" placeholder="razred"></label>
+          </div>
+          <div id="roomList" hidden></div>
+          <p id="roomStatus" class="status">Botove i način igre bira onaj tko prvi otvori sobu.</p>
+
+          <div class="rules">
+            <div class="field"><span class="field-label">Način igre</span>
+              <div class="seg seg-mode" data-for="mode"></div>
+              <select id="mode" hidden>
+                <option value="ffa" data-desc="Svatko za sebe">Svi protiv svih</option>
+                <option value="tdm" data-desc="Crveni protiv Plavih">Timski deathmatch</option>
+                <option value="ctf" data-desc="Ukradi tuđu zastavu">Zastava (CTF)</option>
+              </select>
+            </div>
+            <div class="field-row">
+              <div class="field"><span class="field-label">Botovi za vježbu</span>
+                <div class="seg" data-for="bots"></div>
+                <select id="bots" hidden>
+                  <option value="0">0</option>
+                  <option value="2">2</option>
+                  <option value="4">4</option>
+                  <option value="6">6</option>
+                  <option value="8">8</option>
+                </select>
+              </div>
+              <div class="field"><span class="field-label">Slajdanje</span>
+                <div class="seg" data-for="slide"></div>
+                <select id="slide" hidden>
+                  <option value="1">Dopušteno</option>
+                  <option value="0">Zabranjeno</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <button id="play" class="play-btn" type="button"><span>IGRAJ</span><kbd>Enter</kbd></button>
+          <p id="lobbyError" class="error" role="alert"></p>
+          <p id="mobileWarn" class="error" hidden>Za ovu igru trebaju miš i tipkovnica. Na mobitelu neće raditi.</p>
+        </section>
+
+        <section class="lcard card-skin">
+          <span class="field-label">Skin</span>
+          <div id="skinPreview"></div>
+          <div class="seg seg-skin" data-for="skin"></div>
+          <select id="skin" hidden>
             <option value="klasik">Klasik</option>
             <option value="vozac">Vozač</option>
             <option value="robot">Robot</option>
@@ -44,31 +80,44 @@
             <option value="banana">Banana</option>
             <option value="ninja">Ninja</option>
           </select>
-        </label>
-        <div id="skinPreview"></div>
+          <p class="hint">Skin je samo izgled: svi se jednako lako pogode.</p>
+        </section>
+      </main>
+
+      <footer class="lobby-foot">
+        <button class="link-btn" type="button" data-open="settingsModal">Postavke</button>
+        <button class="link-btn" type="button" data-open="controlsModal">Kontrole</button>
+        <span class="foot-note">Chrome ili Edge · miš i tipkovnica</span>
+      </footer>
+    </div>
+
+    <div id="settingsModal" class="modal" hidden>
+      <div class="modal-card" role="dialog" aria-label="Postavke">
+        <div class="modal-head"><h2>Postavke</h2><button class="modal-x" type="button" data-close aria-label="Zatvori">✕</button></div>
+        <div id="settingsHome"></div>
       </div>
-      <button id="play" type="button">IGRAJ</button>
-      <p id="lobbyError" class="error" role="alert"></p>
-      <p id="mobileWarn" class="error" hidden>Za ovu igru trebaju miš i tipkovnica. Na mobitelu neće raditi.</p>
-      <details><summary>Postavke</summary><div id="settingsHome"></div></details>
-      <details>
-        <summary>Kontrole</summary>
+    </div>
+    <div id="controlsModal" class="modal" hidden>
+      <div class="modal-card" role="dialog" aria-label="Kontrole">
+        <div class="modal-head"><h2>Kontrole</h2><button class="modal-x" type="button" data-close aria-label="Zatvori">✕</button></div>
         <ul class="controls">
           <li><b>WASD</b> kretanje</li>
           <li><b>Miš</b> ciljanje</li>
           <li><b>Lijevi klik</b> pucaj</li>
           <li><b>Desni klik</b> (drži) nišan</li>
-          <li><b>Kotačić</b> zum (s nišanom) / oružje</li>
+          <li><b>Kotačić</b> zum / oružje</li>
           <li><b>Space</b> skok</li>
           <li><b>Shift</b> trčanje</li>
           <li><b>Ctrl</b> ili <b>C</b> čučanj</li>
+          <li><b>Shift + Ctrl</b> slajdanje</li>
           <li><b>R</b> punjenje</li>
           <li><b>1</b> puška</li>
-          <li><b>2</b> ili <b>Q</b> pištolj (niz od 3)</li>
+          <li><b>2</b> ili <b>Q</b> banana-pištolj</li>
           <li><b>Tab</b> rezultati</li>
           <li><b>Esc</b> pauza</li>
         </ul>
-      </details>
+        <p class="hint">Banana-pištolj dobiješ za 3 ubojstva zaredom: 8 eksplozivnih metaka.</p>
+      </div>
     </div>
   </div>
 
@@ -158,8 +207,9 @@
         <li><b>Kotačić</b> zum</li>
         <li><b>Shift</b> trčanje</li>
         <li><b>Ctrl/C</b> čučanj</li>
+        <li><b>Shift+Ctrl</b> slajd</li>
         <li><b>R</b> punjenje</li>
-        <li><b>2 / Q</b> pištolj</li>
+        <li><b>2 / Q</b> banana-pištolj</li>
         <li><b>Tab</b> rezultati</li>
       </ul>
       <button id="leave" class="ghost" type="button">Izađi u izbornik</button>
