@@ -1,4 +1,4 @@
-// Modeli oružja u prvom licu: snajper s optikom i pištolj s eksplozivnim mecima.
+// Modeli oružja u prvom licu: snajper s optikom i banana-pištolj s eksplozivnim mecima.
 // Ishodište svakog modela je kod rukohvata/okidača, cijev gleda prema -Z, +Y je gore, jedinice su metri.
 // Nema vanjskih datoteka: teksture se crtaju na canvasu.
 import * as THREE from 'three';
@@ -6,13 +6,14 @@ import { mergeGeometries, toCreasedNormals } from 'three/addons/utils/BufferGeom
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 
 const RIFLE_MUZZLE = [0, 0.005, -1.215];
-const PISTOL_MUZZLE = [0, 0.033, -0.201];
+// Vrh peteljke banane: odatle izlaze eksplozivni meci.
+const PISTOL_MUZZLE = [0, 0.062, -0.236];
 
 export function createViewmodels(level = 'high') {
   const quality = level === 'low' ? 0 : level === 'ultra' ? 2 : 1;
   const kit = new Kit(quality);
   const rifle = quality === 0 ? buildRifleLow(kit) : buildRifle(kit);
-  const pistol = quality === 0 ? buildPistolLow(kit) : buildPistol(kit);
+  const pistol = buildBananaGun(kit);
   return {
     rifle,
     pistol,
@@ -22,6 +23,14 @@ export function createViewmodels(level = 'high') {
     },
     dispose: () => kit.dispose(),
   };
+}
+
+// Mala banana-puška za likove drugih igrača (u trećem licu). Jeftina: do ~300 trokuta.
+export function makeBananaProp(level = 'low') {
+  const kit = new Kit(level === 'low' ? 0 : 1);
+  kit.prop = true;
+  const group = buildBananaGun(kit);
+  return { group, dispose: () => kit.dispose() };
 }
 
 /* ================================================================ alati za gradnju */
@@ -823,4 +832,169 @@ function buildPistolLow(kit) {
   b.into(pistol);
   pistol.userData.glow = [M.orange];
   return pistol;
+}
+
+/* ================================================================ banana-pištolj */
+// Prava banana, zakrivljena i sužena prema krajevima, s pet blagih bridova. Peteljka sprijeda je
+// "cijev", ispod je drška s okidačem, a narančasti prsten kod peteljke daje do znanja da puca eksplozivno.
+
+const BANANA_PATH = [
+  [0, 0.05, 0.075],
+  [0, 0.03, 0.02],
+  [0, 0.022, -0.05],
+  [0, 0.03, -0.13],
+  [0, 0.052, -0.2],
+];
+
+function bananaRadius(u) {
+  // u = 0 straga, 1 sprijeda; deblja je malo iza sredine, kao prava banana.
+  const k = Math.sin(Math.PI * Math.min(1, Math.max(0, u * 0.94 + 0.03)));
+  return 0.004 + 0.021 * Math.pow(k, 0.7);
+}
+
+function bananaGeometry(lenSegs, radSegs) {
+  const curve = new THREE.CatmullRomCurve3(BANANA_PATH.map((p) => new THREE.Vector3(...p)));
+  const side = new THREE.Vector3(1, 0, 0);
+  const pos = [];
+  const uv = [];
+  const idx = [];
+  const p = new THREE.Vector3();
+  const tan = new THREE.Vector3();
+  const up = new THREE.Vector3();
+  for (let i = 0; i <= lenSegs; i++) {
+    const u = i / lenSegs;
+    curve.getPointAt(u, p);
+    curve.getTangentAt(u, tan);
+    up.crossVectors(tan, side).normalize();
+    const r = bananaRadius(u);
+    for (let j = 0; j <= radSegs; j++) {
+      const a = (j / radSegs) * Math.PI * 2;
+      const ridge = 0.93 + 0.07 * Math.cos(5 * a); // pet blagih bridova
+      const c = Math.cos(a) * r * ridge;
+      const sn = Math.sin(a) * r * ridge;
+      pos.push(p.x + side.x * c + up.x * sn, p.y + side.y * c + up.y * sn, p.z + side.z * c + up.z * sn);
+      uv.push(u, j / radSegs);
+    }
+  }
+  const row = radSegs + 1;
+  for (let i = 0; i < lenSegs; i++) {
+    for (let j = 0; j < radSegs; j++) {
+      const a = i * row + j, b = a + row;
+      idx.push(a, b, a + 1, b, b + 1, a + 1);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  return { geo, curve };
+}
+
+// Kora: žuta, prema peteljci zelenkasta, tamni vrhovi, smeđe pjegice i blage uzdužne linije bridova.
+function bananaTexture(kit, size) {
+  const c = canvas(size, size / 2);
+  const g = c.getContext('2d');
+  const w = c.width, h = c.height;
+  const grad = g.createLinearGradient(0, 0, w, 0);
+  grad.addColorStop(0, '#3a2810');
+  grad.addColorStop(0.06, '#d9a514');
+  grad.addColorStop(0.45, '#f0bf12');
+  grad.addColorStop(0.85, '#e6c21c');
+  grad.addColorStop(0.95, '#8f9f23');
+  grad.addColorStop(1, '#4d5a1c');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, w, h);
+  g.strokeStyle = 'rgba(140, 100, 20, 0.28)';
+  g.lineWidth = Math.max(1, h / 90);
+  for (let k = 0; k < 5; k++) {
+    const y = ((k + 0.5) / 5) * h;
+    g.beginPath();
+    g.moveTo(w * 0.04, y);
+    g.lineTo(w * 0.96, y);
+    g.stroke();
+  }
+  const rand = rng(77);
+  for (let k = 0; k < 140; k++) {
+    const x = w * (0.08 + rand() * 0.84);
+    const y = rand() * h;
+    const r = (0.6 + rand() * 1.8) * (size / 512);
+    g.fillStyle = `rgba(${90 + rand() * 30}, ${55 + rand() * 20}, 15, ${0.35 + rand() * 0.45})`;
+    g.beginPath();
+    g.ellipse(x, y, r * 1.6, r, 0, 0, Math.PI * 2);
+    g.fill();
+  }
+  for (let k = 0; k < 4; k++) {
+    const x = w * (0.2 + rand() * 0.6), y = rand() * h;
+    const blot = g.createRadialGradient(x, y, 0, x, y, 14 * (size / 512));
+    blot.addColorStop(0, 'rgba(120, 80, 20, 0.35)');
+    blot.addColorStop(1, 'rgba(120, 80, 20, 0)');
+    g.fillStyle = blot;
+    g.fillRect(x - 20, y - 20, 40, 40);
+  }
+  const tex = kit.own(new THREE.CanvasTexture(c));
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.anisotropy = 4;
+  return tex;
+}
+
+function buildBananaGun(kit) {
+  const low = kit.quality === 0;
+  const prop = !!kit.prop;
+  const fine = !low;
+  const lenSegs = prop ? 10 : low ? 12 : kit.quality === 2 ? 48 : 28;
+  const radSegs = prop ? 8 : low ? 10 : 20;
+  const mat = (color, extra = {}) => kit.own(fine
+    ? new THREE.MeshStandardMaterial({ color, roughness: 0.6, metalness: 0, ...extra })
+    : new THREE.MeshLambertMaterial({ color, ...(extra.emissive ? { emissive: extra.emissive } : {}) }));
+  const peel = fine
+    ? kit.own(new THREE.MeshStandardMaterial({ map: bananaTexture(kit, kit.quality === 2 ? 1024 : 512), roughness: 0.62, metalness: 0, envMapIntensity: 0.6 }))
+    : mat('#f0cd3c');
+  const stemMat = mat('#6b5a2a', { roughness: 0.85 });
+  const tipMat = mat('#3b2a14', { roughness: 0.9 });
+  const gripMat = mat('#3a2a1a', { roughness: 0.6 });
+  const glow = kit.own(fine
+    ? new THREE.MeshStandardMaterial({ color: 0x000000, emissive: 0xff5a00, emissiveIntensity: 1.3, roughness: 0.4 })
+    : new THREE.MeshBasicMaterial({ color: 0xff8a1f }));
+
+  const group = new THREE.Group();
+  const add = (geo, m, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0) => {
+    const mesh = new THREE.Mesh(kit.own(geo), m);
+    mesh.position.set(x, y, z);
+    mesh.rotation.set(rx, ry, rz);
+    group.add(mesh);
+    return mesh;
+  };
+
+  const { geo, curve } = bananaGeometry(lenSegs, radSegs);
+  add(geo, peel);
+
+  // peteljka sprijeda (cijev) i tamni vrh straga
+  const front = curve.getPointAt(1);
+  const frontDir = curve.getTangentAt(1);
+  const stem = new THREE.CylinderGeometry(0.0055, 0.0075, 0.036, prop ? 6 : 10);
+  stem.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), frontDir));
+  add(stem, stemMat, front.x + frontDir.x * 0.016, front.y + frontDir.y * 0.016, front.z + frontDir.z * 0.016);
+  const back = curve.getPointAt(0);
+  add(new THREE.SphereGeometry(0.0065, prop ? 6 : 10, prop ? 4 : 8), tipMat, back.x, back.y, back.z);
+
+  // narančasti prsten kod peteljke: eksplozivni meci
+  const ringAt = curve.getPointAt(0.93);
+  const ring = new THREE.TorusGeometry(0.0105, 0.0022, prop ? 4 : 8, prop ? 10 : 20);
+  ring.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), curve.getTangentAt(0.93)));
+  add(ring, glow, ringAt.x, ringAt.y, ringAt.z);
+
+  // drška s okidačem, ispod stražnje polovice
+  const grip = fine && !prop ? rbox(0.022, 0.072, 0.03, 0.007, 3) : new THREE.BoxGeometry(0.022, 0.072, 0.03);
+  add(grip, gripMat, 0, -0.018, 0.04, 0.34, 0, 0);
+  if (!prop) {
+    add(new THREE.BoxGeometry(0.005, 0.016, 0.006), gripMat, 0, 0.004, 0.006, 0.3, 0, 0); // okidač
+    // štitnik okidača: polukrug ispod banane, otvoren prema gore
+    const guard = new THREE.TorusGeometry(0.014, 0.0022, 6, 16, Math.PI);
+    guard.rotateY(Math.PI / 2);
+    guard.rotateX(Math.PI);
+    add(guard, gripMat, 0, 0.016, 0.004);
+  }
+  return group;
 }

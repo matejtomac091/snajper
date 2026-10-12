@@ -7,7 +7,7 @@ import {
 import { buildMap, COLORS } from './shared/map.js';
 import { createBody, stepBody } from './shared/physics.js';
 import { GFX_LEVELS, createRenderer, buildEnvironment, makeCharacterMaterial } from './gfx.js';
-import { createViewmodels } from './viewmodel.js';
+import { createViewmodels, makeBananaProp } from './viewmodel.js';
 import { rayWorld } from './shared/ray.js';
 
 const $ = (id) => document.getElementById(id);
@@ -242,10 +242,13 @@ function makeAvatar(hue, name, skin = 'klasik', withTag = true, tagColor = '#fff
   const gunPivot = new THREE.Group();
   gunPivot.position.set(0.2, 0.5, -0.1);
   const rifle = kit.add(gunPivot, kit.B(0.07, 0.09, 1.1), kit.mat('#2a2d32'), 0, 0, -0.4);
-  // Mali pištolj umjesto puške kad igrač drži eksplozivni pištolj (zastavica 8 u stanju sa servera).
+  // Banana-pištolj umjesto puške kad igrač drži eksplozivni pištolj (zastavica 8 u stanju sa servera).
   const pistol = new THREE.Group();
-  kit.add(pistol, kit.B(0.07, 0.12, 0.26), kit.mat('#2a2d32'), 0, 0, -0.1);
-  kit.add(pistol, kit.B(0.075, 0.03, 0.18), kit.mat('#ff7a1a'), 0, 0.03, -0.1);
+  const bananaProp = makeBananaProp(GFX);
+  bananaProp.group.scale.setScalar(1.4);
+  bananaProp.group.position.set(0, -0.02, 0.02);
+  bananaProp.group.traverse((o) => { if (o.isMesh) o.castShadow = SHADOWS; });
+  pistol.add(bananaProp.group);
   pistol.visible = false;
   gunPivot.add(pistol);
   (SKIN_BUILDERS[skin] || SKIN_BUILDERS.klasik)(legs, torso, head, kit);
@@ -261,7 +264,10 @@ function makeAvatar(hue, name, skin = 'klasik', withTag = true, tagColor = '#fff
     tag.position.y = 2.15;
     root.add(tag);
   }
-  return { root, legs, upper, head, gunPivot, rifle, pistol, glint, tag, mats, geos, crouch: false, prot: false, holdsPistol: false };
+  return {
+    root, legs, upper, head, gunPivot, rifle, pistol, glint, tag, mats, geos,
+    disposers: [bananaProp.dispose], crouch: false, prot: false, holdsPistol: false,
+  };
 }
 
 function setHoldsPistol(av, on) {
@@ -302,6 +308,7 @@ function disposeAvatar(av, parent = scene) {
   parent.remove(av.root);
   for (const m of av.mats) m.dispose();
   for (const g of av.geos) g.dispose();
+  for (const d of av.disposers || []) d();
   if (av.tag) {
     av.tag.material.map.dispose();
     av.tag.material.dispose();
@@ -317,7 +324,7 @@ const gunSun = new THREE.DirectionalLight(0xffffff, 1.5);
 gunSun.position.set(1, 2, 1);
 gunScene.add(gunSun);
 
-// Puška i eksplozivni pištolj u ruci (viewmodel.js), detaljniji na visokoj i ultra kvaliteti.
+// Puška i banana-pištolj (eksplozivni meci) u ruci (viewmodel.js), detaljniji na visokoj i ultra kvaliteti.
 const VMS = createViewmodels(GFX);
 if (env.envMap) {
   gunScene.environment = env.envMap;
@@ -343,6 +350,7 @@ gunScene.add(vm);
 
 const PISTOL_VM_POS = [0.16, -0.16, -0.4];
 const pistolVm = VMS.pistol;
+pistolVm.scale.setScalar(1.15);
 pistolVm.userData.flash = muzzleFlash(0.05, 0xffb060, VMS.muzzle.pistol);
 pistolVm.add(pistolVm.userData.flash);
 pistolVm.visible = false;
@@ -1214,12 +1222,12 @@ function handle(m) {
     case 'pistol': me.pistolAmmo = m.n; break;
     case 'streak': {
       if (m.id === me.id) {
-        centerMsg('💥 EKSPLOZIVNI PIŠTOLJ! Tipka 2', 2500);
+        centerMsg('🍌 BANANA-PIŠTOLJ! Tipka 2 · eksplozivni meci', 2800);
         sfx.reward();
         break;
       }
       const r = roster.get(m.id);
-      if (r) feedSystem(`${r.name} ima niz od ${m.n} i eksplozivni pištolj!`);
+      if (r) feedSystem(`${r.name} ima niz od ${m.n} i banana-pištolj!`);
       break;
     }
     case 'boom': boom(m.x, m.y, m.z, m.r || PISTOL.radius); break;
@@ -1863,7 +1871,7 @@ function hud(t) {
   setStyle('hpfill', 'background', hp > 50 ? 'var(--ok)' : hp > 25 ? 'var(--accent)' : 'var(--danger)');
   const pistolOut = me.weapon === 'pistol';
   const pistolCount = cheats.pistol ? '∞' : String(me.pistolAmmo);
-  setText('ammo', pistolOut ? `💥 ${pistolCount}${cheats.pistol ? '' : ` / ${PISTOL.mag}`}`
+  setText('ammo', pistolOut ? `🍌 ${pistolCount}${cheats.pistol ? '' : ` / ${PISTOL.mag}`}`
     : me.reloading ? 'PUNJENJE…' : cheats.ammo ? '∞' : `${me.ammo} / ${W.mag}`);
   setClass('ammo', 'pistol', pistolOut);
   const mine = roster.get(me.id);
