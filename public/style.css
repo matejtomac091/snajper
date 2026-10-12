@@ -109,18 +109,24 @@ summary { cursor: pointer; }
 #hud { position: fixed; inset: 0; z-index: 10; pointer-events: none; }
 #hud[hidden] { display: none; }
 
+/* Nišan bez optike: četiri crtice koje se razmiču koliko je rasipanje metka, i točka u sredini. */
 #crosshair {
-  position: absolute; left: 50%; top: 50%;
-  width: 4px; height: 4px; margin: -2px 0 0 -2px;
-  background: #fff; border-radius: 50%;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.7);
+  position: absolute; left: 50%; top: 50%; width: 0; height: 0;
+  --gap: 10px; --len: 8px; --w: 2px;
 }
-#spread {
-  position: absolute; left: 50%; top: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.35);
-  border-radius: 50%;
-  transform: translate(-50%, -50%);
+#crosshair .ch {
+  position: absolute; display: block; background: #fff; border-radius: 1px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
 }
+#crosshair .t, #crosshair .b { width: var(--w); height: var(--len); left: calc(var(--w) / -2); }
+#crosshair .l, #crosshair .r { width: var(--len); height: var(--w); top: calc(var(--w) / -2); }
+#crosshair .t { top: calc(-1 * (var(--gap) + var(--len))); }
+#crosshair .b { top: var(--gap); }
+#crosshair .l { left: calc(-1 * (var(--gap) + var(--len))); }
+#crosshair .r { left: var(--gap); }
+#crosshair .dot { width: 3px; height: 3px; left: -1.5px; top: -1.5px; border-radius: 50%; }
+#crosshair.pistol .ch { background: #ffb34d; }
+#crosshair.sprint { opacity: 0.3; }
 
 #scope {
   position: absolute; inset: 0; display: none;

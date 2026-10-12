@@ -17,6 +17,7 @@ export const P = {
   eye: 1.6,
   crouchEye: 1.1,
   walk: 5.5,
+  sprint: 8.2,       // Shift: samo naprijed, ne s nišanom ni u čučnju
   crouchSpeed: 2.4,
   scopeSpeed: 3.0,
   jump: 7.0,

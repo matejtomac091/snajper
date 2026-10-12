@@ -22,7 +22,10 @@ const angDiff = (a, b) => wrap(b - a);
 /* ================================================================ postavke */
 
 // blood: krv je isključena dok je netko ne uključi (školska igra). gfx: 'low' | 'high' | 'ultra'.
-const DEFAULTS = { name: '', room: 'razred', bots: 0, sens: 1, quality: 0.5, volume: 0.7, skin: 'klasik', blood: false, gfx: 'low', mode: 'ffa' };
+const DEFAULTS = {
+  name: '', room: 'razred', bots: 0, sens: 1, quality: 0.5, volume: 0.7, skin: 'klasik', blood: false, gfx: 'low', mode: 'ffa',
+  fullscreen: true,
+};
 const settings = (() => {
   try {
     return { ...DEFAULTS, ...JSON.parse(localStorage.getItem('snajper') || '{}') };
@@ -1595,7 +1598,9 @@ function updateMe(t, dt) {
       me.scoped = false;
     }
     const up = locked && k.has('Space');
-    const down = locked && (k.has('ShiftLeft') || k.has('ShiftRight') || k.has('KeyC'));
+    const down = locked && (k.has('ControlLeft') || k.has('ControlRight') || k.has('KeyC'));
+    // Trčanje: Shift, samo prema naprijed, ne s nišanom, ne u čučnju.
+    me.sprinting = locked && f > 0 && !down && !me.scoped && (k.has('ShiftLeft') || k.has('ShiftRight'));
     if (cheats.fly) {
       fly(b, f, r, up, down, dt);
     } else {
@@ -1605,12 +1610,14 @@ function updateMe(t, dt) {
         jump: up,
         crouch: down,
         scoped: me.scoped,
+        sprint: me.sprinting,
         speedMul: cheats.speed ? 2 : 1,
         jumpMul: cheats.speed ? 1.6 : 1,
       }, dt, MAP.boxes);
     }
   } else {
     me.scoped = false;
+    me.sprinting = false;
   }
   const eyeTarget = me.alive ? eyeHeight(b.crouch) : 0.45;
   me.eye += (eyeTarget - me.eye) * Math.min(1, dt * 12);
@@ -1621,7 +1628,8 @@ function updateMe(t, dt) {
     camera.rotation.x += (Math.random() - 0.5) * a;
     camera.rotation.y += (Math.random() - 0.5) * a;
   }
-  const targetFov = me.scoped ? W.zoom[me.zoom] : BASE_FOV;
+  const sprintFov = me.sprinting && Math.hypot(b.vx, b.vz) > P.walk ? 6 : 0;
+  const targetFov = me.scoped ? W.zoom[me.zoom] : BASE_FOV + sprintFov;
   if (Math.abs(camera.fov - targetFov) > 0.05) {
     camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 20);
     camera.updateProjectionMatrix();
@@ -1691,7 +1699,9 @@ function updateViewmodel(t, dt) {
   const swayY = Math.abs(Math.cos(bobT)) * 0.012 * bob;
   // Promjena oružja: novo oružje kratko se podigne odozdo (180 ms).
   const raise = Math.min(1, (t - me.switchAt) / 180);
-  const low = (1 - raise) * (1 - raise);
+  // Pri trčanju oružje se spusti i nagne (glatko), kao u pravim pucačinama.
+  sprintK += ((me.sprinting ? 1 : 0) - sprintK) * Math.min(1, dt * 10);
+  const low = (1 - raise) * (1 - raise) + sprintK * 0.12;
   const flash = t - flashAt < 55;
   const pistolOut = me.weapon === 'pistol';
   vm.visible = !pistolOut;
@@ -1700,7 +1710,7 @@ function updateViewmodel(t, dt) {
   pistolVm.userData.flash.visible = pistolOut && flash;
   if (pistolOut) {
     pistolVm.position.set(PISTOL_VM_POS[0] + swayX, PISTOL_VM_POS[1] + swayY - low * 0.25, PISTOL_VM_POS[2] + vmKick * 0.05);
-    pistolVm.rotation.set(vmKick * 0.3 - low * 0.9, 0, 0);
+    pistolVm.rotation.set(vmKick * 0.3 - low * 0.9, sprintK * 0.5, sprintK * 0.3);
     return;
   }
   const reloadK = me.reloading ? Math.sin(Math.min(1, Math.max(0, (me.reloadEnd - t) / (W.reload * 1000))) * Math.PI) : 0;
@@ -1709,7 +1719,7 @@ function updateViewmodel(t, dt) {
     -0.2 + swayY - reloadK * 0.15 - low * 0.25,
     -0.5 + vmKick * 0.08,
   );
-  vm.rotation.set(vmKick * 0.12 - reloadK * 0.6 - low * 0.9, 0, reloadK * 0.4);
+  vm.rotation.set(vmKick * 0.12 - reloadK * 0.6 - low * 0.9, sprintK * 0.45, reloadK * 0.4 + sprintK * 0.35);
   const since = (t - me.lastShot) / 1000;
   if (since < W.cooldown && !me.reloading) vm.rotation.z += Math.sin((since / W.cooldown) * Math.PI) * 0.25;
 }
@@ -1778,6 +1788,9 @@ function teamHud() {
 }
 
 let fps = 0, fpsFrames = 0, fpsStart = 0;
+let crossGap = 10;
+let sprintK = 0;
+let hudDt = 0.016;
 
 function hud(t) {
   const hp = Math.max(0, Math.ceil(me.hp));
@@ -1803,6 +1816,8 @@ function hud(t) {
   const scopeOn = me.scoped && camera.fov < 45;
   setClass('scope', 'on', scopeOn);
   setStyle('crosshair', 'display', scopeOn || !me.alive ? 'none' : 'block');
+  setClass('crosshair', 'pistol', pistolOut);
+  setClass('crosshair', 'sprint', !!me.sprinting);
 
   const b = me.body;
   const moving = Math.hypot(b.vx, b.vz) > 1.2;
@@ -1810,11 +1825,13 @@ function hud(t) {
     : pistolOut ? pistolSpread(moving)
       : spreadFor(me.scoped, (t - me.scopeStart) / 1000, moving, !b.onGround && !cheats.fly, b.crouch);
   const px = (Math.tan(spread) / Math.tan((camera.fov * Math.PI) / 360)) * (window.innerHeight / 2);
-  const showSpread = me.alive && !scopeOn;
-  const size = showSpread ? Math.max(8, Math.round(px * 2)) : 0;
-  setStyle('spread', 'width', `${size}px`);
-  setStyle('spread', 'height', `${size}px`);
-  setStyle('spread', 'display', showSpread ? 'block' : 'none');
+  // Crtice se razmiču do ruba rasipanja, glatko da ne trepere.
+  crossGap += (Math.max(4, px) - crossGap) * Math.min(1, hudDt * 14);
+  const gap = `${Math.round(crossGap)}px`;
+  if (hudCache.get('crosshair.--gap') !== gap) {
+    hudCache.set('crosshair.--gap', gap);
+    $('crosshair').style.setProperty('--gap', gap);
+  }
 
   setClass('hitmarker', 'show', t < hitUntil);
   setStyle('dmgdir', 'opacity', t < dmgDirUntil ? String(Math.min(1, (dmgDirUntil - t) / 400)) : '0');
@@ -1854,6 +1871,7 @@ function frame(t) {
     updateFlags(t);
     updateViewmodel(t, dt);
     net(t);
+    hudDt = dt;
     hud(t);
   } else {
     const a = t * 0.00004;
@@ -1876,8 +1894,20 @@ requestAnimationFrame(frame);
 
 /* ================================================================ unos */
 
+// Cijeli zaslon + Keyboard Lock (Chrome/Edge): Ctrl+W/T/N tada idu igri, a ne pregledniku.
+async function enterFullscreen() {
+  if (!settings.fullscreen) return;
+  try {
+    if (!document.fullscreenElement) await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
+    if (navigator.keyboard?.lock) await navigator.keyboard.lock();
+  } catch {
+    /* preglednik ne da: igra radi i bez toga, čučanj je onda sigurniji na C */
+  }
+}
+
 async function lockPointer() {
   if (!inGame) return;
+  await enterFullscreen();
   $('pauseHint').textContent = '';
   try {
     await canvas.requestPointerLock({ unadjustedMovement: true });
@@ -1960,7 +1990,13 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   if (!locked) return;
-  if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
+  if (e.code === 'Escape') {
+    // S cijelim zaslonom i zaključanom tipkovnicom Esc stiže do igre, pa pauzu otvaramo sami.
+    document.exitPointerLock();
+    return;
+  }
+  // Ctrl je čučanj: Ctrl+R, Ctrl+D, Ctrl+S, Ctrl+brojevi ne smiju raditi ništa u pregledniku.
+  if (e.ctrlKey || ['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
   input.keys.add(e.code);
   if (e.repeat) return;
   if (e.code === 'KeyR' && me.weapon === 'rifle') reload();
@@ -2069,6 +2105,13 @@ function bindSettings() {
       ws.close();
     }
     location.reload();
+  });
+  const fs = $('fullscreen');
+  fs.value = settings.fullscreen ? '1' : '0';
+  fs.addEventListener('change', () => {
+    settings.fullscreen = fs.value === '1';
+    saveSettings();
+    if (!settings.fullscreen && document.fullscreenElement) document.exitFullscreen().catch(() => {});
   });
   const blood = $('blood');
   blood.value = settings.blood ? '1' : '0';

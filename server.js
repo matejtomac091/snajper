@@ -38,6 +38,14 @@ const FLAG_RETURN = Number(process.env.FLAG_RETURN) || FLAG.returnTime; // s, te
 const TEAM_SWITCH_GAP = 5000; // ms između dvije promjene tima
 const MAX_Y = 9.5;
 const BOT_RANGE = 95;
+// Botovi su namjerno sporiji od dobrog igrača: kasnije primijete, sporije okreću i duže ciljaju.
+const BOT = {
+  scanEvery: 450, scanJitter: 300,   // ms između "pogleda oko sebe"
+  react: 1400, reactJitter: 1200,    // ms od kad te vidi do prvog hica
+  turnRate: 3.2,                     // rad/s okretanja prema meti
+  pitchRate: 4,
+  aimTolerance: 0.035,               // rad: koliko točno mora naciljati prije hica
+};
 const BOT_NAMES = ['Bot Ivo', 'Bot Ana', 'Bot Luka', 'Bot Mia', 'Bot Toni', 'Bot Sara', 'Bot Dino', 'Bot Lea'];
 
 const now = () => performance.now();
@@ -488,7 +496,7 @@ function onUpdate(p, m) {
   const dt = Math.min(1, (t - p.lastMove) / 1000);
   p.lastMove = t;
   // "Budžet" kretanja dopušta kratke zastoje mreže, ali ne i teleportiranje ili prebrzo trčanje.
-  p.budget = Math.min(4, p.budget + P.walk * 1.35 * dt + 0.05);
+  p.budget = Math.min(4, p.budget + P.sprint * 1.25 * dt + 0.05);
   const crouch = !!m.c;
   const dh = Math.hypot(x - p.x, z - p.z);
   const A = MAP.arena;
@@ -774,7 +782,7 @@ function syncBots(room) {
 function botThink(room, b, t, dt) {
   const ai = b.ai;
   if (t >= ai.nextScan) {
-    ai.nextScan = t + 250 + Math.random() * 150;
+    ai.nextScan = t + BOT.scanEvery + Math.random() * BOT.scanJitter;
     let best = null;
     let bestD = BOT_RANGE;
     const ex = b.x, ey = b.y + eyeHeight(b.crouch), ez = b.z;
@@ -790,7 +798,7 @@ function botThink(room, b, t, dt) {
     }
     if (best !== ai.target) {
       ai.target = best;
-      ai.readyAt = t + 600 + Math.random() * 700;
+      ai.readyAt = t + BOT.react + Math.random() * BOT.reactJitter;
     }
   }
   if (ai.target && (!ai.target.alive || !room.players.has(ai.target.id))) ai.target = null;
@@ -802,8 +810,8 @@ function botThink(room, b, t, dt) {
     const ty = o.y + 1.2 - (b.y + eyeHeight(b.crouch));
     const yaw = Math.atan2(-tx, -tz);
     const pitch = Math.atan2(ty, Math.hypot(tx, tz));
-    b.yaw = turn(b.yaw, yaw, 5 * dt);
-    b.pitch += (pitch - b.pitch) * Math.min(1, 6 * dt);
+    b.yaw = turn(b.yaw, yaw, BOT.turnRate * dt);
+    b.pitch += (pitch - b.pitch) * Math.min(1, BOT.pitchRate * dt);
     if (!b.scoped) {
       b.scoped = true;
       b.scopeStart = t;
@@ -849,7 +857,7 @@ function botThink(room, b, t, dt) {
         ai.stuckCheck = t + 600;
       }
     }
-    const aimed = Math.abs(angDiff(b.yaw, yaw)) < 0.05;
+    const aimed = Math.abs(angDiff(b.yaw, yaw)) < BOT.aimTolerance;
     if (aimed && t >= ai.readyAt && t - b.lastShot > ai.nextShotGap) {
       const [dx, dy, dz] = aimDir(b.yaw, b.pitch);
       fireRifle(room, b, dx, dy, dz, 0.007 + Math.random() * 0.014);

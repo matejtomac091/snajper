@@ -41,8 +41,12 @@ Najmanje kašnjenje, ali radi samo ako školska mreža dopušta da se računala 
 ## Kontrole
 
 WASD kretanje · miš ciljanje · lijevi klik pucaj · desni klik (drži) nišan · kotačić zum 4x/8x (s nišanom),
-inače mijenja oružje · Space skok · Shift ili C čučanj · R punjenje · 1 puška · 2 ili Q eksplozivni pištolj ·
-Tab rezultati · Esc pauza
+inače mijenja oružje · Space skok · Shift trčanje (samo naprijed, ne s nišanom) · Ctrl ili C čučanj ·
+R punjenje · 1 puška · 2 ili Q eksplozivni pištolj · Tab rezultati · Esc pauza
+
+Igra pri ulasku prelazi na cijeli zaslon i zaključava tipkovnicu (Chrome i Edge), da Ctrl+W, Ctrl+R ili
+Ctrl+broj ne zatvore karticu dok čučiš. Iz cijelog zaslona se izlazi držanjem tipke Esc. To se može ugasiti
+u Postavkama (Cijeli zaslon u igri); tada čučni tipkom C. U Firefoxu zaključavanje ne radi, pa tamo koristi C.
 
 ## Pravila
 
@@ -80,7 +84,8 @@ Skin se bira u izborniku prije ulaska, uz mali 3D pregled. Ima ih šest: Klasik,
 Banana i Ninja. Dio svakog skina poprimi boju igrača.
 
 Skinovi su samo izgled: svi imaju istu pogodnu zonu, pa nijedan nije lakše ni teže pogoditi.
-Botovi dobiju nasumičan skin.
+Botovi dobiju nasumičan skin. Botovi su namjerno sporiji od dobrog igrača: primijete te tek nakon
+0.45 do 0.75 s, prvi hitac ispale 1.4 do 2.6 s nakon toga i sporije se okreću.
 
 ## Grafika i rezolucija
 
@@ -105,7 +110,7 @@ Krv je zadano isključena (pogoci daju sive iskre). Uključuje se u Postavkama, 
 2. U igri pritisni **Esc** i na dnu klikni mali tekst **admin**, upiši lozinku.
 
 Cheatovi (vrijede samo za tebe): besmrtnost, beskonačni meci, beskonačni eksplozivni pištolj, brza paljba, savršen nišan,
-brzina i skok, letenje kroz zidove (Space gore, Shift dolje), vidi kroz zidove.
+brzina i skok, letenje kroz zidove (Space gore, Ctrl ili C dolje), vidi kroz zidove.
 Soba: nova runda, završi rundu, broj botova, poruka svima, izbaci igrača.
 
 Lozinka se pamti samo dok je kartica otvorena. Izbačeni igrač može ponovno ući.

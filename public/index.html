@@ -60,7 +60,8 @@
           <li><b>Desni klik</b> (drži) nišan</li>
           <li><b>Kotačić</b> zum (s nišanom) / oružje</li>
           <li><b>Space</b> skok</li>
-          <li><b>Shift</b> ili <b>C</b> čučanj</li>
+          <li><b>Shift</b> trčanje</li>
+          <li><b>Ctrl</b> ili <b>C</b> čučanj</li>
           <li><b>R</b> punjenje</li>
           <li><b>1</b> puška</li>
           <li><b>2</b> ili <b>Q</b> pištolj (niz od 3)</li>
@@ -92,6 +93,14 @@
     </label>
     <button id="gfxApply" class="ghost small" type="button" hidden>Primijeni grafiku (ponovno spajanje)</button>
     <label>Glasnoća<input id="volume" type="range" min="0" max="1" step="0.05"></label>
+    <label>Cijeli zaslon u igri
+      <select id="fullscreen">
+        <option value="1">Uključeno (preporučeno)</option>
+        <option value="0">Isključeno</option>
+      </select>
+    </label>
+    <p class="hint">U cijelom zaslonu Ctrl+W, Ctrl+R i Ctrl+brojevi ne zatvaraju karticu dok čučiš (Chrome i Edge).
+      Bez toga čučni tipkom C. Izlaz iz cijelog zaslona: drži Esc.</p>
     <label>Krv
       <select id="blood">
         <option value="0">Isključeno</option>
@@ -102,8 +111,7 @@
 
   <div id="hud" hidden>
     <div id="scope"><div class="line h"></div><div class="line v"></div><div class="dot"></div></div>
-    <div id="crosshair"></div>
-    <div id="spread"></div>
+    <div id="crosshair"><i class="ch t"></i><i class="ch b"></i><i class="ch l"></i><i class="ch r"></i><i class="ch dot"></i></div>
     <div id="hitmarker"></div>
     <div id="dmgdir"></div>
     <div id="vignette"></div>
@@ -148,7 +156,8 @@
         <li><b>WASD</b> kretanje</li>
         <li><b>Desni klik</b> nišan</li>
         <li><b>Kotačić</b> zum</li>
-        <li><b>Shift/C</b> čučanj</li>
+        <li><b>Shift</b> trčanje</li>
+        <li><b>Ctrl/C</b> čučanj</li>
         <li><b>R</b> punjenje</li>
         <li><b>2 / Q</b> pištolj</li>
         <li><b>Tab</b> rezultati</li>
@@ -173,7 +182,7 @@
             <label class="check"><input type="checkbox" data-cheat="wall"> Vidi kroz zidove</label>
             <label class="check"><input type="checkbox" data-cheat="pistol"> Beskonačni eksplozivni pištolj</label>
           </div>
-          <p class="hint">Letenje: Space gore, Shift dolje.</p>
+          <p class="hint">Letenje: Space gore, Ctrl ili C dolje.</p>
           <div class="admin-title">Soba</div>
           <div class="admin-row">
             <button class="ghost small" type="button" data-act="restart">Nova runda</button>

@@ -24,13 +24,14 @@ export function createBody(x = 0, y = 0, z = 0) {
   return { x, y, z, vx: 0, vy: 0, vz: 0, onGround: false, crouch: false };
 }
 
-// input: { wx, wz (željeni smjer u svijetu), jump, crouch, scoped, speedMul?, jumpMul? }
+// input: { wx, wz (željeni smjer u svijetu), jump, crouch, scoped, sprint?, speedMul?, jumpMul? }
 export function stepBody(b, input, dt, boxes) {
   if (input.crouch) b.crouch = true;
   else if (b.crouch && !blocked(boxes, b.x, b.y, b.z, P.height)) b.crouch = false;
 
   const h = b.crouch ? P.crouchHeight : P.height;
-  const max = (b.crouch ? P.crouchSpeed : input.scoped ? P.scopeSpeed : P.walk) * (input.speedMul || 1);
+  const base = b.crouch ? P.crouchSpeed : input.scoped ? P.scopeSpeed : input.sprint ? P.sprint : P.walk;
+  const max = base * (input.speedMul || 1);
 
   let wx = input.wx || 0;
   let wz = input.wz || 0;

@@ -191,6 +191,23 @@ async function combatTests(port) {
   assert.match(noAdmin.msg, /ADMIN_KEY/);
   console.log('  bez ADMIN_KEY nema admina ✔');
 
+  // trčanje (8.2 m/s) server prihvaća, a 20 m/s vraća natrag (rezerva od 4 m za trzaje mreže brzo se potroši)
+  await sleep(300);
+  for (const m of A.log) m._used = true;
+  const homeX = A.me.x;
+  for (let i = 0; i < 20; i++) {
+    A.me.x = homeX + (i % 2 ? 0 : 0.4); // 0.4 m svakih 50 ms = 8 m/s
+    await sleep(50);
+  }
+  await A.none('corr', () => true, 300);
+  for (let i = 0; i < 20; i++) {
+    A.me.x = homeX + (i % 2 ? 0 : 1.0); // 20 m/s
+    await sleep(50);
+  }
+  await A.wait('corr', () => true, 1500);
+  A.me.x = homeX;
+  console.log('  trčanje 8 m/s prihvaćeno, 20 m/s odbijeno ✔');
+
   // izlazak
   B.close();
   await A.wait('leave', (m) => m.id === wB.id);

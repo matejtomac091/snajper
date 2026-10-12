@@ -58,6 +58,17 @@ export function run() {
   walk(s, 0, -1, 1.5, { jump: true });
   assert.ok(s.z < -36.5, `skokom preko vreće, z=${s.z.toFixed(2)}`);
 
+  // trčanje: brže od hodanja, ali ne u čučnju ni s nišanom
+  const run = createBody(-64, 0, -40);
+  for (let i = 0; i < 60; i++) stepBody(run, { wx: 1, wz: 0, sprint: true }, 1 / 60, B);
+  assert.ok(Math.abs(Math.hypot(run.vx, run.vz) - P.sprint) < 0.01, `trči ${Math.hypot(run.vx, run.vz).toFixed(2)} m/s`);
+  const runCrouch = createBody(-64, 0, -40);
+  for (let i = 0; i < 60; i++) stepBody(runCrouch, { wx: 1, wz: 0, sprint: true, crouch: true }, 1 / 60, B);
+  assert.ok(Math.hypot(runCrouch.vx, runCrouch.vz) <= P.crouchSpeed + 0.01, 'u čučnju nema trčanja');
+  const runScope = createBody(-64, 0, -40);
+  for (let i = 0; i < 60; i++) stepBody(runScope, { wx: 1, wz: 0, sprint: true, scoped: true }, 1 / 60, B);
+  assert.ok(Math.hypot(runScope.vx, runScope.vz) <= P.scopeSpeed + 0.01, 's nišanom nema trčanja');
+
   // čučanj
   const c = walk(createBody(-64, 0, -40), 0, 0, 0.2, { crouch: true });
   assert.ok(c.crouch, 'čučanj radi');
