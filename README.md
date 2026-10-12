@@ -42,7 +42,7 @@ Najmanje kašnjenje, ali radi samo ako školska mreža dopušta da se računala 
 
 WASD kretanje · miš ciljanje · lijevi klik pucaj · desni klik (drži) nišan · kotačić zum 4x/8x (s nišanom),
 inače mijenja oružje · Space skok · Shift trčanje (samo naprijed, ne s nišanom) · Ctrl ili C čučanj ·
-R punjenje · 1 puška · 2 ili Q eksplozivni pištolj · Tab rezultati · Esc pauza
+Shift + Ctrl slajdanje (ako ga soba dopušta) · R punjenje · 1 puška · 2 ili Q banana-pištolj · Tab rezultati · Esc pauza
 
 Igra pri ulasku prelazi na cijeli zaslon i zaključava tipkovnicu (Chrome i Edge), da Ctrl+W, Ctrl+R ili
 Ctrl+broj ne zatvore karticu dok čučiš. Iz cijelog zaslona se izlazi držanjem tipke Esc. To se može ugasiti
@@ -56,7 +56,10 @@ u Postavkama (Cijeli zaslon u igri); tada čučni tipkom C. U Firefoxu zaključa
 - Kad netko nišani, vidi mu se odsjaj na glavi.
 - 1.5 s nakon pojave te nitko ne može pogoditi (prekida se kad pucaš).
 - Runda traje 5 minuta. Pobjeđuje tko ima najviše ubojstava.
-- Za svaka 3 ubojstva zaredom (bez umiranja) dobiješ eksplozivni pištolj s 8 metaka (tipka 2 ili Q).
+- Ubojstvo puškom bez nišana svi vide kao NO-SCOPE (u popisu ubojstava, a žrtva vidi tko ju je no-scopeao).
+- Slajdanje: u trku pritisni Ctrl ili C. Kratki nalet (do 10.5 m/s, oko 5 m), nisko kao u čučnju, pa 0.9 s pauze.
+  Vlasnik sobe bira je li slajdanje dopušteno, a admin to može promijeniti usred igre.
+- Za svaka 3 ubojstva zaredom (bez umiranja) dobiješ banana-pištolj s 8 eksplozivnih metaka (tipka 2 ili Q).
   Nema nišana, puca svakih 0.3 s. Izravan pogodak ubija, a metak eksplodira gdje udari i ubija sve
   u krugu od 3.5 m, osim ako ih štiti zid. Tebe ne ozljeđuje. Kad potrošiš metke, vraćaš se na pušku.
 - Kad umreš, niz kreće od nule. Metci pištolja koje već imaš ostaju do kraja runde.
@@ -109,9 +112,11 @@ Krv je zadano isključena (pogoci daju sive iskre). Uključuje se u Postavkama, 
    Lozinka se ne smije pisati u kod jer je repozitorij javan.
 2. U igri pritisni **Esc** i na dnu klikni mali tekst **admin**, upiši lozinku.
 
-Cheatovi (vrijede samo za tebe): besmrtnost, beskonačni meci, beskonačni eksplozivni pištolj, brza paljba, savršen nišan,
+Cheatovi (vrijede samo za tebe): besmrtnost, beskonačni meci, beskonačni banana-pištolj, brza paljba, savršen nišan,
 brzina i skok, letenje kroz zidove (Space gore, Ctrl ili C dolje), vidi kroz zidove.
-Soba: nova runda, završi rundu, broj botova, poruka svima, izbaci igrača.
+Soba: nova runda, završi rundu, način igre, broj botova, slajdanje uključeno/isključeno, poruka svima,
+izbaci igrača. Timovi (TDM i CTF): prebaci bilo kojeg igrača u Crvene ili Plave, promiješaj timove,
+zaključaj timove (tada se igrači ne mogu sami prebaciti).
 
 Lozinka se pamti samo dok je kartica otvorena. Izbačeni igrač može ponovno ući.
 
