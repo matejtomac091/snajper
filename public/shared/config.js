@@ -20,6 +20,12 @@ export const P = {
   sprint: 8.2,       // Shift: samo naprijed, ne s nišanom ni u čučnju
   crouchSpeed: 2.4,
   scopeSpeed: 3.0,
+  // Slajdanje: Shift + W pa Ctrl/C. Kratki nalet brzine koji se troši trenjem, nisko kao čučanj.
+  slideSpeed: 10.5,
+  slideTime: 0.75,   // s najduže
+  slideFriction: 1.5,
+  slideSteer: 2.5,   // m/s² koliko se smije skretati u slajdu
+  slideCooldown: 0.9,
   jump: 7.0,
   gravity: 20,
   step: 0.55,        // stepenice i niske prepreke prelaze se bez skoka
