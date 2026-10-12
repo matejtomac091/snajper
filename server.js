@@ -85,7 +85,9 @@ function serveStatic(req, res) {
   if (pathname === '/rooms') {
     // Izbornik pokazuje aktivne sobe i njihov način, da se zna u što ulaziš.
     const list = [...rooms.values()]
-      .map((r) => ({ code: r.code, mode: r.mode, players: r.humans(), bots: r.players.size - r.humans(), state: r.state }))
+      .map((r) => ({
+        code: r.code, mode: r.mode, slide: r.allowSlide, players: r.humans(), bots: r.players.size - r.humans(), state: r.state,
+      }))
       .sort((a, b) => b.players - a.players)
       .slice(0, 20);
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
@@ -139,7 +141,7 @@ const server = http.createServer(serveStatic);
 const rooms = new Map();
 
 class Room {
-  constructor(code, botFill, mode = 'ffa') {
+  constructor(code, botFill, mode = 'ffa', allowSlide = true) {
     this.code = code;
     this.players = new Map();
     this.nextId = 1;
@@ -152,6 +154,9 @@ class Room {
     this.teamScore = [0, 0];
     this.flags = mode === 'ctf' ? makeFlags() : null;
     this.votes = new Map();
+    // Slajdanje bira onaj tko otvori sobu (admin ga može mijenjati). Fizika se vrti u pregledniku,
+    // pa server ovo ne može potpuno provesti; slajd ionako ne daje više od brzine trčanja.
+    this.allowSlide = allowSlide;
   }
 
   humans() {
@@ -631,7 +636,8 @@ function fireRifle(room, p, dx, dy, dz, forcedSpread) {
     ? 0
     : forcedSpread ?? spreadFor(p.scoped, (t - p.scopeStart) / 1000, speedOf(p) > 1.2, !p.ground, p.crouch);
   const s = traceShot(room, p, dx, dy, dz, spread, W.range, t, null);
-  if (s.target) damage(room, p, s.target, s.part, W.damage[s.part], t, null);
+  // No-scope: hitac iz puške bez nišana (botovi uvijek nišane).
+  if (s.target) damage(room, p, s.target, s.part, W.damage[s.part], t, null, !p.scoped);
 }
 
 /* ------------------------------------------------------------------ eksplozivni pištolj */
@@ -690,7 +696,7 @@ function explode(room, p, x, y, z, t, rewindTo) {
 /* ------------------------------------------------------------------ šteta i ubojstva */
 
 // weapon: null za pušku, 'pistol' za pištolj.
-function damage(room, from, to, part, amount, t, weapon) {
+function damage(room, from, to, part, amount, t, weapon, noScope = false) {
   if (to.cheats.god) {
     send(from, { t: 'hit', part, kill: false });
     return;
@@ -699,11 +705,11 @@ function damage(room, from, to, part, amount, t, weapon) {
   const kill = to.hp <= 0;
   send(from, { t: 'hit', part, kill });
   send(to, { t: 'dmg', hp: Math.max(0, to.hp), from: from.id, fx: r2(from.x), fz: r2(from.z) });
-  if (kill) killPlayer(room, from, to, t, weapon || (part === 'head' ? 'head' : 'shot'), part === 'head');
+  if (kill) killPlayer(room, from, to, t, weapon || (part === 'head' ? 'head' : 'shot'), part === 'head', noScope);
 }
 
 // w u poruci 'kill': 'shot' ili 'head' (puška), 'pistol' (pištolj, izravno ili eksplozijom).
-function killPlayer(room, from, to, t, w, hs) {
+function killPlayer(room, from, to, t, w, hs, noScope = false) {
   to.alive = false;
   to.hp = 0;
   to.scoped = false;
@@ -713,7 +719,9 @@ function killPlayer(room, from, to, t, w, hs) {
   to.respawnAt = t + RESPAWN_TIME * 1000;
   from.kills++;
   from.streak++;
-  room.broadcast({ t: 'kill', k: from.id, v: to.id, hs, w, kk: from.kills, vd: to.deaths });
+  const msg = { t: 'kill', k: from.id, v: to.id, hs, w, kk: from.kills, vd: to.deaths };
+  if (noScope) msg.ns = 1;
+  room.broadcast(msg);
   onKillModes(room, from, to, t);
   if (!from.bot && from.streak % PISTOL.streak === 0) {
     from.pistolAmmo = PISTOL.mag;
@@ -1079,6 +1087,10 @@ function onAdmin(room, p, m) {
     case 'restart':
       resetMatch(room, t);
       break;
+    case 'slide':
+      room.allowSlide = !!m.on;
+      room.broadcast({ t: 'rules', slide: room.allowSlide });
+      break;
     case 'mode':
       if (MODES.includes(m.mode) && m.mode !== room.mode) setMode(room, m.mode, t);
       break;
@@ -1137,7 +1149,7 @@ wss.on('connection', (ws) => {
       }
       if (!r) {
         const mode = MODES.includes(m.mode) ? m.mode : 'ffa';
-        r = new Room(code, clamp(Math.floor(+m.bots) || 0, 0, MAX_BOTS), mode);
+        r = new Room(code, clamp(Math.floor(+m.bots) || 0, 0, MAX_BOTS), mode, m.slide !== false);
         rooms.set(code, r);
         console.log(`soba "${code}" otvorena (${mode})`);
       }
@@ -1147,6 +1159,7 @@ wss.on('connection', (ws) => {
         t: 'welcome', id: player.id, room: code, state: room.state,
         tl: Math.ceil(room.timeLeft), players: roster(room),
         mode: room.mode, team: player.team, teamScore: room.teamScore, scoreLimit: scoreLimit(room),
+        slide: room.allowSlide,
       });
       room.broadcast({
         t: 'join', id: player.id, name: player.name, hue: player.hue, bot: false, skin: player.skin, team: player.team,

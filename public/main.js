@@ -921,6 +921,25 @@ const sfx = (() => {
       src.stop(t + 0.2);
     },
     draw: () => { tone(420, 0.04, 0.1); tone(950, 0.03, 0.08, 'square', 0.07); },
+    slide: () => {
+      if (!ctx) return;
+      const t = ctx.currentTime;
+      const src = ctx.createBufferSource();
+      src.buffer = noise;
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.setValueAtTime(900, t);
+      bp.frequency.exponentialRampToValueAtTime(300, t + 0.6);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.32, t + 0.05);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.65);
+      src.connect(bp);
+      bp.connect(g);
+      g.connect(master);
+      src.start(t);
+      src.stop(t + 0.7);
+    },
     reward: () => { tone(660, 0.1, 0.2, 'triangle'); tone(880, 0.1, 0.2, 'triangle', 0.1); tone(1320, 0.2, 0.22, 'triangle', 0.2); },
     bolt:() => { tone(2400, 0.02, 0.12); tone(1800, 0.02, 0.12, 'square', 0.12); },
     reload: () => { tone(900, 0.03, 0.12); tone(700, 0.03, 0.12, 'square', 0.9); tone(1200, 0.03, 0.12, 'square', 1.9); },
@@ -1002,7 +1021,8 @@ function resetAvatar(r) {
 }
 
 function updateRoomInfo() {
-  $('roomInfo').textContent = `Soba: ${roomCode} · ${MODE_NAMES[mode] || ''} · igrača: ${roster.size}`;
+  $('roomInfo').textContent = `Soba: ${roomCode} · ${MODE_NAMES[mode] || ''} · slajdanje ${roomSlide ? 'dopušteno' : 'zabranjeno'} · igrača: ${roster.size}`;
+  if ($('adminSlide')) $('adminSlide').checked = roomSlide;
   const btn = $('teamBtn');
   btn.hidden = !teamMode() || me.team === null;
   if (!btn.hidden) btn.textContent = `Promijeni tim (sada: ${TEAMS[me.team].name})`;
@@ -1083,7 +1103,7 @@ function removeRoster(id) {
 
 /* ================================================================ mreža */
 
-function connect(name, room, bots, skin, gameMode) {
+function connect(name, room, bots, skin, gameMode, slide) {
   $('play').disabled = true;
   $('lobbyError').textContent = 'Spajanje… (ako server spava, prvi put može trajati do minute)';
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -1096,7 +1116,7 @@ function connect(name, room, bots, skin, gameMode) {
   }, 60000);
   ws.onopen = () => {
     clearTimeout(timeout);
-    send({ t: 'join', name, room, bots, skin, mode: gameMode });
+    send({ t: 'join', name, room, bots, skin, mode: gameMode, slide });
   };
   ws.onmessage = (e) => {
     let m;
@@ -1139,6 +1159,8 @@ function handle(m) {
     case 'corr':
       me.body.x = m.x; me.body.y = m.y; me.body.z = m.z;
       me.body.vx = me.body.vy = me.body.vz = 0;
+      me.body.slideT = 0;
+      me.body.stepped = 0;
       break;
     case 'join':
       addRoster(m);
@@ -1177,6 +1199,11 @@ function handle(m) {
       failLobby(m.msg);
       break;
     case 'admin': onAdminState(m); break;
+    case 'rules':
+      roomSlide = !!m.slide;
+      feedSystem(`Slajdanje je sada ${roomSlide ? 'dopušteno' : 'zabranjeno'}`);
+      updateRoomInfo();
+      break;
     case 'pistol': me.pistolAmmo = m.n; break;
     case 'streak': {
       if (m.id === me.id) {
@@ -1208,6 +1235,7 @@ function onWelcome(m) {
   ended = m.state === 'end';
   roomCode = m.room;
   mode = MODES.includes(m.mode) ? m.mode : 'ffa';
+  roomSlide = m.slide !== false;
   teamScore = m.teamScore || [0, 0];
   scoreLimit = m.scoreLimit || 0;
   me.team = m.team === 0 || m.team === 1 ? m.team : null;
@@ -1233,6 +1261,9 @@ function onSpawn(m) {
   b.x = m.x; b.y = m.y; b.z = m.z;
   b.vx = b.vy = b.vz = 0;
   b.crouch = false;
+  b.slideT = 0;
+  b.stepped = 0;
+  camStep = 0;
   me.yaw = m.yaw;
   me.pitch = 0;
   me.eye = P.eye;
@@ -1319,7 +1350,9 @@ function onKill(m) {
   if (v) v.deaths = m.vd;
   killEffect(m); // prije svega ostalog: treba još vidljiv lik žrtve
   const pistol = m.w === 'pistol';
-  feedKill(k, v, m.hs, pistol);
+  const noScope = !!m.ns;
+  feedKill(k, v, m.hs, pistol, noScope);
+  if (noScope && k && v) feedSystem(`${k.name} je no-scopeao ${v.name}!`);
   if (m.v === me.id) {
     me.alive = false;
     me.hp = 0;
@@ -1327,13 +1360,16 @@ function onKill(m) {
     me.streak = 0;
     me.deadAt = performance.now();
     let by = '';
-    if (k) by = pistol ? `Raznio te eksplozivni pištolj: ${k.name}` : `Srušio te ${k.name}${m.hs ? ' (headshot)' : ''}`;
+    if (k && pistol) by = `Raznio te banana-pištolj: ${k.name}`;
+    else if (k && noScope) by = `${k.name} te no-scopeao!${m.hs ? ' (headshot)' : ''}`;
+    else if (k) by = `Srušio te ${k.name}${m.hs ? ' (headshot)' : ''}`;
     $('deathBy').textContent = by;
     $('death').hidden = false;
   }
   if (m.k === me.id) {
     me.streak++;
-    centerMsg(pistol ? 'BUM!' : m.hs ? 'HEADSHOT!' : 'ELIMINACIJA', 1400);
+    const text = pistol ? 'BUM!' : noScope ? (m.hs ? 'NO-SCOPE HEADSHOT!' : 'NO-SCOPE!') : m.hs ? 'HEADSHOT!' : 'ELIMINACIJA';
+    centerMsg(text, noScope ? 2200 : 1400);
   }
   if (!$('board').hidden) renderBoard($('board'), 'Rezultati');
 }
@@ -1426,9 +1462,14 @@ function playerColor(r) {
   return r ? `hsl(${r.hue} 70% 65%)` : '#fff';
 }
 
-function feedKill(k, v, hs, pistol) {
+function feedKill(k, v, hs, pistol, noScope) {
   const row = feedRow(k?.id === me.id || v?.id === me.id ? 'mine' : '');
   row.append(span(k ? k.name : '?', playerColor(k)), span(pistol ? '  💥  ' : '  ▸  '), span(v ? v.name : '?', playerColor(v)));
+  if (noScope) {
+    const n = span('  NO-SCOPE');
+    n.className = 'ns';
+    row.append(n);
+  }
   if (hs) {
     const h = span('  HEADSHOT');
     h.className = 'hs';
@@ -1611,6 +1652,7 @@ function updateMe(t, dt) {
         crouch: down,
         scoped: me.scoped,
         sprint: me.sprinting,
+        canSlide: roomSlide,
         speedMul: cheats.speed ? 2 : 1,
         jumpMul: cheats.speed ? 1.6 : 1,
       }, dt, MAP.boxes);
@@ -1621,14 +1663,23 @@ function updateMe(t, dt) {
   }
   const eyeTarget = me.alive ? eyeHeight(b.crouch) : 0.45;
   me.eye += (eyeTarget - me.eye) * Math.min(1, dt * 12);
-  camera.position.set(b.x, b.y + me.eye, b.z);
-  camera.rotation.set(me.pitch, me.yaw, me.alive ? 0 : 0.35);
+  // Stepenice: fizika skače po 0.5 m, a kamera to izgladi pa nema trzanja gore ni dolje.
+  camStep -= b.stepped;
+  b.stepped = 0;
+  camStep *= Math.exp(-dt * 13);
+  if (Math.abs(camStep) > 0.9) camStep = 0;
+  const sliding = me.alive && b.slideT > 0;
+  if (sliding && !wasSliding) sfx.slide();
+  wasSliding = sliding;
+  slideK += ((sliding ? 1 : 0) - slideK) * Math.min(1, dt * 12);
+  camera.position.set(b.x, b.y + me.eye + camStep, b.z);
+  camera.rotation.set(me.pitch, me.yaw, me.alive ? slideK * 0.07 : 0.35);
   if (t < shakeUntil) {
     const a = shakeAmp * ((shakeUntil - t) / 450);
     camera.rotation.x += (Math.random() - 0.5) * a;
     camera.rotation.y += (Math.random() - 0.5) * a;
   }
-  const sprintFov = me.sprinting && Math.hypot(b.vx, b.vz) > P.walk ? 6 : 0;
+  const sprintFov = (me.sprinting && Math.hypot(b.vx, b.vz) > P.walk ? 6 : 0) + slideK * 9;
   const targetFov = me.scoped ? W.zoom[me.zoom] : BASE_FOV + sprintFov;
   if (Math.abs(camera.fov - targetFov) > 0.05) {
     camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 20);
@@ -1710,7 +1761,7 @@ function updateViewmodel(t, dt) {
   pistolVm.userData.flash.visible = pistolOut && flash;
   if (pistolOut) {
     pistolVm.position.set(PISTOL_VM_POS[0] + swayX, PISTOL_VM_POS[1] + swayY - low * 0.25, PISTOL_VM_POS[2] + vmKick * 0.05);
-    pistolVm.rotation.set(vmKick * 0.3 - low * 0.9, sprintK * 0.5, sprintK * 0.3);
+    pistolVm.rotation.set(vmKick * 0.3 - low * 0.9, sprintK * 0.5, sprintK * 0.3 + slideK * 0.35);
     return;
   }
   const reloadK = me.reloading ? Math.sin(Math.min(1, Math.max(0, (me.reloadEnd - t) / (W.reload * 1000))) * Math.PI) : 0;
@@ -1719,7 +1770,7 @@ function updateViewmodel(t, dt) {
     -0.2 + swayY - reloadK * 0.15 - low * 0.25,
     -0.5 + vmKick * 0.08,
   );
-  vm.rotation.set(vmKick * 0.12 - reloadK * 0.6 - low * 0.9, sprintK * 0.45, reloadK * 0.4 + sprintK * 0.35);
+  vm.rotation.set(vmKick * 0.12 - reloadK * 0.6 - low * 0.9, sprintK * 0.45, reloadK * 0.4 + sprintK * 0.35 + slideK * 0.4);
   const since = (t - me.lastShot) / 1000;
   if (since < W.cooldown && !me.reloading) vm.rotation.z += Math.sin((since / W.cooldown) * Math.PI) * 0.25;
 }
@@ -1789,6 +1840,10 @@ function teamHud() {
 
 let fps = 0, fpsFrames = 0, fpsStart = 0;
 let crossGap = 10;
+let camStep = 0;
+let slideK = 0;
+let wasSliding = false;
+let roomSlide = true;
 let sprintK = 0;
 let hudDt = 0.016;
 
