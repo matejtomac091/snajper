@@ -412,6 +412,103 @@ async function voteTests(port) {
   B.close();
 }
 
+// No-scope, slajdanje kao pravilo sobe, prihvaćanje slajda na serveru i admin slaganje timova.
+async function extraTests(port) {
+  const A = new ModeClient(port, { slide: false });
+  const B = new ModeClient(port, { slide: true });
+  const wA = await A.connect('Xa', 'extra');
+  const wB = await B.connect('Xb', 'extra');
+  assert.equal(wA.slide, false, 'vlasnik sobe zabranio slajdanje');
+  assert.equal(wB.slide, false, 'drugi igrač ne može promijeniti pravilo sobe');
+  const listed = (await fetch(`http://localhost:${port}/rooms`).then((r) => r.json())).find((r) => r.code === 'extra');
+  assert.equal(listed.slide, false);
+  await A.wait('spawn');
+  await B.wait('spawn');
+  A.keepAlive({ s: 0 });
+  B.keepAlive();
+  A.send({ t: 'alogin', key: ADMIN_KEY });
+  await A.wait('admin', (m) => m.ok);
+  A.send({ t: 'admin', a: 'slide', on: true });
+  await B.wait('rules', (m) => m.slide === true && m.locked === false);
+  console.log('  slajdanje: bira vlasnik sobe, vidi se u /rooms, admin ga mijenja ✔');
+
+  // no-scope: hitac bez nišana (savršen nišan samo da sigurno pogodi)
+  A.send({ t: 'admin', a: 'cheat', name: 'aim', on: true });
+  await A.wait('admin', (m) => m.ok && m.cheats.aim);
+  await sleep(1700);
+  A.send({ t: 'shoot', d: dirTo(eye(A), [B.me.x, 1.1, B.me.z]) });
+  const ns = await B.wait('kill', (m) => m.k === wA.id, 3000);
+  assert.equal(ns.ns, 1, 'ubojstvo bez nišana je no-scope');
+  await B.wait('spawn', (m) => m.q === 2, 5000);
+  A.keepAlive({ s: 1 });
+  await sleep(1800);
+  A.send({ t: 'shoot', d: dirTo(eye(A), [B.me.x, 1.1, B.me.z]) });
+  const scoped = await B.wait('kill', (m) => m.k === wA.id, 3000);
+  assert.equal(scoped.ns, undefined, 's nišanom nije no-scope');
+  console.log('  no-scope: bez nišana ns=1, s nišanom ništa ✔');
+
+  // slajd: putanja izračunata pravom fizikom (trk pa slajd), slana 20 puta u sekundi, server je prihvaća
+  await B.wait('spawn', (m) => m.q === 3, 5000);
+  await sleep(300);
+  clearInterval(B.timer);
+  for (const m of B.log) m._used = true;
+  const MAP = buildMap();
+  const run = (body, dir, frame) => {
+    const crouch = frame >= 70;
+    stepBody(body, { wx: dir[0], wz: dir[1], sprint: !crouch, crouch, canSlide: true }, 1 / 60, MAP.boxes);
+  };
+  // smjer u kojem ima mjesta za trk i slajd (bez zida na putu)
+  const dir = [[0, -1], [0, 1], [1, 0], [-1, 0]].find((d) => {
+    const probe = createBody(B.me.x, 0, B.me.z);
+    for (let f = 0; f < 150; f++) run(probe, d, f);
+    return probe.slideCd > 0;
+  });
+  assert.ok(dir, 'ima slobodnog mjesta za slajd');
+  const body = createBody(B.me.x, 0, B.me.z);
+  for (let frame = 0; frame < 150; frame++) {
+    run(body, dir, frame);
+    if (frame % 3 === 2) {
+      Object.assign(B.me, { x: body.x, y: body.y, z: body.z });
+      B.update({ c: body.crouch ? 1 : 0 });
+      await sleep(50);
+    }
+  }
+  assert.ok(body.slideCd > 0, 'slajd se stvarno dogodio u simulaciji');
+  await B.none('corr', () => true, 400);
+  B.keepAlive();
+  console.log('  server prihvaća pravi trk + slajd bez vraćanja ✔');
+  A.close();
+  B.close();
+
+  // admin slaže timove
+  const T = new ModeClient(port, { mode: 'tdm' });
+  const U = new ModeClient(port);
+  const wT = await T.connect('Ta', 'timovi');
+  const wU = await U.connect('Tu', 'timovi');
+  assert.notEqual(wT.team, wU.team, 'automatski u različite timove');
+  T.send({ t: 'alogin', key: ADMIN_KEY });
+  await T.wait('admin', (m) => m.ok);
+  U.send({ t: 'admin', a: 'setteam', id: wU.id, team: wT.team });
+  await T.none('team', (m) => m.id === wU.id, 300);
+  T.send({ t: 'admin', a: 'setteam', id: wU.id, team: wT.team });
+  await U.wait('team', (m) => m.id === wU.id && m.team === wT.team);
+  T.send({ t: 'admin', a: 'lockteams', on: true });
+  await U.wait('rules', (m) => m.locked === true);
+  await sleep(100);
+  U.send({ t: 'team' });
+  const refused = await U.wait('team', (m) => !!m.err);
+  assert.match(refused.err, /zaključao/);
+  for (const m of U.log) m._used = true;
+  T.send({ t: 'admin', a: 'shuffle' });
+  await sleep(400);
+  const teams = new Map([[wT.id, wT.team], [wU.id, wT.team]]);
+  for (const m of U.log) if (m.t === 'team' && !m.err) teams.set(m.id, m.team);
+  assert.notEqual(teams.get(wT.id), teams.get(wU.id), 'nakon miješanja dva igrača su u različitim timovima');
+  console.log('  admin: prebacivanje igrača, zaključani timovi, miješanje ✔');
+  T.close();
+  U.close();
+}
+
 export async function run() {
   flagPlacementTests();
   const s = await startServer(BASE + 3, { SPAWNS, ADMIN_KEY, FLAG_RETURN: String(FLAG_RETURN), END_TIME: '2' });
@@ -424,6 +521,7 @@ export async function run() {
     await botTeamTests(BASE + 3);
     await ctfTests(BASE + 3);
     await voteTests(BASE + 3);
+    await extraTests(BASE + 3);
     const flagEvents = bots.log.filter((m) => m.t === 'flag').length;
     console.log(`  CTF s 4 bota: ${flagEvents} događaja sa zastavama, server bez grešaka`);
   } finally {

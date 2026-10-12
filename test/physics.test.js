@@ -69,6 +69,40 @@ export function run() {
   for (let i = 0; i < 60; i++) stepBody(runScope, { wx: 1, wz: 0, sprint: true, scoped: true }, 1 / 60, B);
   assert.ok(Math.hypot(runScope.vx, runScope.vz) <= P.scopeSpeed + 0.01, 's nišanom nema trčanja');
 
+  // slajd: u trku pritisni čučanj → nalet brzine koji se troši; samo ako soba dopušta i ako trčiš
+  const sprintThen = (canSlide, sprint = true) => {
+    const b0 = createBody(-64, 0, -40);
+    for (let i = 0; i < 60; i++) stepBody(b0, { wx: 1, wz: 0, sprint, canSlide }, 1 / 60, B);
+    stepBody(b0, { wx: 1, wz: 0, crouch: true, canSlide }, 1 / 60, B);
+    return b0;
+  };
+  const sl = sprintThen(true);
+  assert.ok(sl.slideT > 0 && Math.hypot(sl.vx, sl.vz) > P.sprint + 1, `slajd kreće, ${Math.hypot(sl.vx, sl.vz).toFixed(1)} m/s`);
+  assert.ok(sl.crouch, 'u slajdu si nisko');
+  const x0 = sl.x;
+  for (let i = 0; i < 60; i++) stepBody(sl, { wx: 1, wz: 0, crouch: true, canSlide: true }, 1 / 60, B);
+  assert.ok(sl.slideT === 0 && sl.slideCd > 0, 'slajd završi i kreće pauza');
+  assert.ok(sl.x - x0 > 3.5 && sl.x - x0 < 7, `slajd prijeđe ${(sl.x - x0).toFixed(1)} m`);
+  stepBody(sl, { wx: 1, wz: 0, crouch: false, canSlide: true }, 1 / 60, B);
+  stepBody(sl, { wx: 1, wz: 0, crouch: true, canSlide: true }, 1 / 60, B);
+  assert.equal(sl.slideT, 0, 'nema novog slajda dok traje pauza');
+  assert.equal(sprintThen(false).slideT, 0, 'soba bez slajdanja: samo čučanj');
+  assert.equal(sprintThen(true, false).slideT, 0, 'bez trčanja nema slajda');
+
+  // niz stepenice: tijelo prati stepenice, ne leti preko njih (kamera to dodatno izgladi)
+  const down = createBody(-53.5, 6, -53.5);
+  walk(down, 0, 0, 0.3);
+  assert.ok(Math.abs(down.y - 6) < 0.01, `na vrhu tornja, y=${down.y}`);
+  down.stepped = 0;
+  let airFrames = 0;
+  for (let i = 0; i < 240; i++) {
+    stepBody(down, { wx: 1, wz: 0 }, 1 / 60, B);
+    if (!down.onGround) airFrames++;
+  }
+  assert.ok(down.y === 0 && down.x > -42, `sišao niz stepenice, y=${down.y.toFixed(2)} x=${down.x.toFixed(1)}`);
+  assert.ok(airFrames <= 3, `niz stepenice bez skakutanja (u zraku ${airFrames} okvira)`);
+  assert.ok(down.stepped < -5.5, `gotovo cijeli spust ide preko stepenica (za kameru): ${down.stepped.toFixed(2)} m`);
+
   // čučanj
   const c = walk(createBody(-64, 0, -40), 0, 0, 0.2, { crouch: true });
   assert.ok(c.crouch, 'čučanj radi');
